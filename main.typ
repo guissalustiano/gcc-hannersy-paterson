@@ -411,17 +411,27 @@ This requires log2(y) adds for the operation.
 The C implementation would be
 
 ```c
-  uint32_t ssl(uint32_t rs1, uint32_t rs2) {
-    uint32_t rd = 0;
+  uint32_t sll(uint32_t rs1, uint32_t rs2) {
+    uint32_t rd = rs1;
     for (uint32_t i = 0; i < rs2; i++) {
-      rd += rd
+      rd += rd;
     }
-    return rd
+    return rd;
   }
 ```
 
-// witch can be implement with our assembly instruction
-// TODO: assembly implementation
+```asm
+# rd = rs1 << rs2
+    add   rd, rs1, x0    # rd = rs1
+    beq   rs2, x0, done  # if rs2 == 0, no shift needed
+    add   t1, rs2, x0    # t1 = rs2 (loop counter)
+loop:
+    add   rd, rd, rd     # rd = rd * 2  (rd <<= 1)
+    addi  t1, t1, -1     # decrement counter
+    beq   t1, x0, done   # if counter == 0, done
+    beq   x0, x0, loop   # unconditional branch back (x0 == x0 always)
+done:
+```
 
 
 ==== srl (R[rd] = R[rs1] >> R[rs2])
@@ -443,7 +453,32 @@ uint32_t srl(uint32_t x, uint32_t shift) {
 }
 ```
 
-// TODO: assembly implementation
+```asm
+# rd = rs1 >> rs2 (logical shift right)
+    addi  t0, x0, 31
+    and   t3, rs2, t0    # t3 = shift & 31
+    addi  rd, x0, 0      # result = 0
+    addi  t1, x0, 1      # out_mask = 1
+    addi  t2, x0, 1      # in_mask = 1
+    # compute in_mask = 1 << shift  (derived sll)
+    beq   t3, x0, loop   # if shift == 0, in_mask is already 1
+    add   t4, t3, x0     # t4 = shift (sll counter)
+sll_in:
+    add   t2, t2, t2     # in_mask <<= 1
+    addi  t4, t4, -1
+    beq   t4, x0, loop
+    beq   x0, x0, sll_in
+loop:
+    beq   t2, x0, done   # if in_mask == 0, all bits processed
+    and   t4, rs1, t2    # t4 = rs1 & in_mask
+    beq   t4, x0, skip   # if bit is 0, skip
+    or    rd, rd, t1     # result |= out_mask
+skip:
+    add   t1, t1, t1     # out_mask <<= 1
+    add   t2, t2, t2     # in_mask <<= 1
+    beq   x0, x0, loop
+done:
+```
 
 ==== sra (R[rd] = R[rs1] >> R[rs2])
 
@@ -461,7 +496,47 @@ uint32_t sra(uint32_t x, uint32_t shift) {
 }
 ```
 
-// TODO: assembly implementation
+```asm
+# rd = rs1 >>_s rs2 (arithmetic shift right)
+
+    # Step 1: logical right shift (reuse derived srl)
+    [srl  rd, rs1, rs2]  # rd = srl(rs1, rs2)
+
+    # Step 2: check sign bit of rs1 (bit 31 = 0x80000000)
+    addi  t0, x0, 1
+    addi  t3, x0, 31     # sll t0, t0, 31 → t0 = 0x80000000
+sign_sll:
+    add   t0, t0, t0
+    addi  t3, t3, -1
+    beq   t3, x0, sign_check
+    beq   x0, x0, sign_sll
+sign_check:
+    and   t1, rs1, t0    # t1 = rs1 & 0x80000000
+    beq   t1, x0, done   # sign bit is 0 → positive, no extension needed
+
+    # Step 3: build sign_mask = ((1 << shift) - 1) << (32 - shift)
+    addi  t2, x0, 1
+    beq   rs2, x0, build # if shift == 0, (1<<0)-1 = 0, mask is 0
+    add   t3, rs2, x0    # t3 = shift (sll counter)
+mask_sll:
+    add   t2, t2, t2     # t2 <<= 1
+    addi  t3, t3, -1
+    beq   t3, x0, build
+    beq   x0, x0, mask_sll
+build:
+    addi  t2, t2, -1     # t2 = (1 << shift) - 1  (low_ones)
+    addi  t3, x0, 32
+    sub   t3, t3, rs2    # t3 = 32 - shift
+    beq   t3, x0, apply  # if shift == 32 nothing to shift (undefined anyway)
+ext_sll:
+    add   t2, t2, t2     # t2 <<= 1  (sign_mask <<= 1)
+    addi  t3, t3, -1
+    beq   t3, x0, apply
+    beq   x0, x0, ext_sll
+apply:
+    or    rd, rd, t2     # rd = srl_result | sign_mask
+done:
+```
 
 === Branch
 
@@ -541,8 +616,46 @@ Only uses ADDI to load a value to a temporary register and call non imediate ope
 === Load
 
 ==== LUI
-- Using multiples addi and sll
-- Loading imediate from memory
+
+`lui rd, imm20` sets `rd = imm20 << 12`, placing a 20-bit value in the upper bits of a register.
+Two derivation strategies are considered; which one GCC can produce is left for future investigation.
+
+===== Approach 1: addi + derived sll
+
+Since `addi` only encodes 12-bit signed immediates (range −2048 to 2047), a 20-bit immediate cannot be loaded in one instruction.
+Split `imm20` into two 10-bit halves that each fit safely in a positive `addi` immediate (0–1023), reconstruct the value with `or`, then shift left by 12.
+
+```
+imm20 = hi × 2^10 + lo       where hi = imm20[19:10],  lo = imm20[9:0]
+rd    = imm20 << 12  =  (hi << 22) | (lo << 12)
+```
+
+```asm
+addi  rd, x0, hi     # rd = upper 10 bits of imm20  (fits in addi: 0–1023)
+[sll  rd, rd, 10]    # rd = hi << 10
+addi  t0, x0, lo     # t0 = lower 10 bits of imm20  (fits in addi: 0–1023)
+or    rd, rd, t0     # rd = (hi << 10) | lo  = imm20
+[sll  rd, rd, 12]    # rd = imm20 << 12
+```
+
+The assembler computes `hi` and `lo` from the symbol address at link time.
+
+===== Approach 2: constant pool (lw from ROM)
+
+Since the LUI immediate is always known at link time, the linker can store the full 32-bit value (`imm20 << 12`) in a constant pool at the end of ROM and replace the entire sequence with a single load.
+
+```asm
+lw    rd, pool_entry(x0)  # rd = *(pool_entry)  where pool_entry holds imm20 << 12
+```
+
+This requires that `pool_entry` fits in a 12-bit signed offset from `x0` (address < 2048), which holds for the short programs typical of the educational processor.
+
+#table(
+  columns: 3,
+  [*Approach*], [*Instructions*], [*Memory reads*],
+  [addi + sll], [~5], [0],
+  [lw from pool], [1], [1],
+)
 
 ==== LB
 - Needs to mask correct value
