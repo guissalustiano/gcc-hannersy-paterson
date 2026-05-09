@@ -205,6 +205,20 @@ mas n suporta todas as intrucoes do isntruction set
 // sistema, melhoria de um sistema existente, definição de processo, técnicas, procedimentos, ou
 // um outro tipo de trabalho acordado com o orientador.
 
+
+== Monociclo implementation
+- monocicle
+- Barramento wishbone
+- RAM memory:
+  - 2 cycle read
+  - 5 cycles write
+
+Espaco de endereçamento:
+- Boot: 0x200
+- RAM: final do endereçamento
+- Perifericos: 0xFC00000000
+	- registrador unico para o led
+
 == Monociclo - sc0
 
 Apenas implementação basica do texto (cap 4.4) - fig 4.25
@@ -228,7 +242,7 @@ Dado a não existência de instruções que interajam com o PC, essa implementa�
 == Monociclo extendido - sc1
 Suporta o minimo de intruções para suportar toda a linguagem C
 - todas as instrucoes do sc0
-- jar
+- jalr
 - lui
 
 === Limitacoes
@@ -237,24 +251,114 @@ Suporta o minimo de intruções para suportar toda a linguagem C
 == Monociclo sem fance e controle - sc2
 Supporta todas as instruções do rv32i instruções de mem. ordering, csr acess e system
 
+Instruction:
+- add
+- addi
+- and
+- andi
+auipc
+beq
+bge
+bgeu
+blt
+bltu
+bne
+jal
+jalr
+lb
+lbu
+lh
+lhu
+lui
+lw
+or
+ori
+sb
+sh
+sll
+slli
+slt
+slti
+sltiu
+sltu
+sra
+srai
+srl
+srli
+sub
+sw
+xor
+xori
+
+
 == Monociclo rv32i - sc3
 
-Quando o processador tem pipeline o proprio gcc
-adiciona nop em branch pra n carregar o pipeline
-
 requisito:
-o gcc n pode gerar nenhuma bolha de pipeline
+o gcc n pode gerar nenhuma nop para intrucoes de desvio pois eh mono ciclo, logo n tem necessidade
 
 == Monociclo rvi64 - sc4
 Suporta todas as instrucoes do rvi64
 
-==  Monociclo float point - sc5
+== Monociclo rvi64 with multiplily - sc5
+Suporta todas as instrucoes do sc4 e M extension
+mul
+mulh
+mulhsu
+mulhu
+div
+divu
+rem
+remu
+
+==  Monociclo float point - sc6
+support sc5 +
 Suporta extensão float point, apenas o green card do hannersy e patterson
 - float teve outras extensoes
 
+Instruction:
+fld, flw
+fsc,fsw
+fadd.s,fadd.c
+fsub.s, fsub.d
+fdiv.s, fdiv.d
+fsqrt.s, fsqrt.d
+fmadd.s, fmadd.d
+fmsub.s, fmjsub.d
+fmnadd.s, fmnadd.d
+fsgnj.s, fsgnj.d
+fsgnjn.s, fsgnjn.d
+fsgnjx.s, fsgnjx.d
+fmin.s, fmin.d
+fmax.s, fmax.c
+feq.s, feq.c
+flt.s, flt.c
+fle.s, fle.c
+fclass.s, fclass.c
+fmv.s.x, fmv.c.x
+fmv.x.s, fmv.x.c
+fcvt.c.s
+fcvt.s.w, fcvt.d.w
+fcvt.s.l, fcvt.c.wu
+fcvt.s.wu, fcvt.c.wu
+fcvt.w.s, scvt.l.c
+fcvt.l.s, fcvt.l.c
+fcvt.wu.s, fcvt.wu.c
+fcvt.lu.s, fcvt.lu.d
 
-== Monociclo atomico - sc6
-Suporta atomico
+== Monociclo atomico - sc7
+Suporta atomico:
+
+amoadd.w, amoadd.d
+amoand.w, amoanc.d
+amomax.w, amomax.d
+amomaxu.w, amomaxu.c
+amomin.w, amomon.c
+amominu.w, amominu.d
+amoor.w, amoor.d
+amoswap.w, amoswap.d
+amoxor.w, amoxor.d
+lr.w, lr.d
+sc.w,sc.d
 
 
 = Método de Trabalho
