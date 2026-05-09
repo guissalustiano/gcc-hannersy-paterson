@@ -384,12 +384,12 @@ Buscando facilitar a implementação para os alunos o trabalho buscou reduzir o 
 === Aritimeticas
 ==== not (R[rd] = ~R[rs1])
 
-Since risc-v uses two complement and then $-x = ~x + 1$,
-we can use $~x = 1 - x$.
+Since risc-v uses two's complement and $-x = ~x + 1$,
+we get $~x = -x - 1$.
 
 ```asm
-addi t0, x0, 1
-sub rd, t0, rs1
+sub  rd, x0, rs1    # rd = -rs1
+addi rd, rd, -1     # rd = -rs1 - 1 = ~rs1
 ```
 
 ==== xor (R[rd] = R[rs1] ^ R[rs2])
@@ -397,16 +397,16 @@ sub rd, t0, rs1
 Using D'morgan
 
 ```asm
-and t0, rs1, rs2
-not t0 # t0 = ~(rs1 & rs2)
-or t2, rs1, rs2
-and rd, rs1, rs2 # rd = (rs1 | rs2) & ~(rs1 & rs2) = rs1 ^ rs2
+and t0, rs1, rs2    # t0 = rs1 & rs2
+not t0              # t0 = ~(rs1 & rs2)
+or  t2, rs1, rs2    # t2 = rs1 | rs2
+and rd, t0, t2      # rd = ~(rs1 & rs2) & (rs1 | rs2) = rs1 ^ rs2
 ```
 
 ==== sll (R[rd] = R[rs1] << R[rs2])
 
 Since $x << y = x * 2^y = x * 2 * 2 * 2 * ... * 2$ and $x * 2 = x + x$.
-This requires log2(y) adds for the operation.
+This requires $y$ adds for the operation.
 
 The C implementation would be
 
@@ -422,9 +422,9 @@ The C implementation would be
 
 ```asm
 # rd = rs1 << rs2
+    add   t1, rs2, x0    # t1 = rs2 (save shift count before rd may alias rs2)
     add   rd, rs1, x0    # rd = rs1
-    beq   rs2, x0, done  # if rs2 == 0, no shift needed
-    add   t1, rs2, x0    # t1 = rs2 (loop counter)
+    beq   t1, x0, done   # if rs2 == 0, no shift needed
 loop:
     add   rd, rd, rd     # rd = rd * 2  (rd <<= 1)
     addi  t1, t1, -1     # decrement counter
@@ -457,6 +457,7 @@ uint32_t srl(uint32_t x, uint32_t shift) {
 # rd = rs1 >> rs2 (logical shift right)
     addi  t0, x0, 31
     and   t3, rs2, t0    # t3 = shift & 31
+    add   t5, rs1, x0    # t5 = rs1 (save before rd is zeroed; fixes rd/rs1 aliasing)
     addi  rd, x0, 0      # result = 0
     addi  t1, x0, 1      # out_mask = 1
     addi  t2, x0, 1      # in_mask = 1
@@ -470,7 +471,7 @@ sll_in:
     beq   x0, x0, sll_in
 loop:
     beq   t2, x0, done   # if in_mask == 0, all bits processed
-    and   t4, rs1, t2    # t4 = rs1 & in_mask
+    and   t4, t5, t2     # t4 = rs1 & in_mask  (use saved t5)
     beq   t4, x0, skip   # if bit is 0, skip
     or    rd, rd, t1     # result |= out_mask
 skip:
@@ -486,12 +487,9 @@ done:
 uint32_t sra(uint32_t x, uint32_t shift) {
     shift = shift & 31u;
     uint32_t result = srl(x, shift);
-
-    // if positive, do nothing
-    if ((x & (1u << 31)) == 0) return result;
-
-    uint32_t low_ones  = (1u << shift) - 1u;
-    uint32_t sign_mask = low_ones << (32u - shift);
+    if (shift == 0 || (x >> 31) == 0) return result;
+    // OR in the top 'shift' bits: left-shifting -1 leaves exactly those bits set
+    uint32_t sign_mask = (uint32_t)(-1) << (32u - shift);
     return result | sign_mask;
 }
 ```
@@ -499,42 +497,38 @@ uint32_t sra(uint32_t x, uint32_t shift) {
 ```asm
 # rd = rs1 >>_s rs2 (arithmetic shift right)
 
-    # Step 1: logical right shift (reuse derived srl)
-    [srl  rd, rs1, rs2]  # rd = srl(rs1, rs2)
-
-    # Step 2: check sign bit of rs1 (bit 31 = 0x80000000)
+    # Step 1: check sign bit of rs1 BEFORE srl (avoids rd/rs1 aliasing)
     addi  t0, x0, 1
-    addi  t3, x0, 31     # sll t0, t0, 31 → t0 = 0x80000000
+    addi  t3, x0, 31
 sign_sll:
     add   t0, t0, t0
     addi  t3, t3, -1
     beq   t3, x0, sign_check
     beq   x0, x0, sign_sll
-sign_check:
-    and   t1, rs1, t0    # t1 = rs1 & 0x80000000
-    beq   t1, x0, done   # sign bit is 0 → positive, no extension needed
+sign_check:              # t0 = 0x80000000
+    and   t6, rs1, t0   # t6 = sign bit (saved in t6; srl uses t0–t5)
 
-    # Step 3: build sign_mask = ((1 << shift) - 1) << (32 - shift)
-    addi  t2, x0, 1
-    beq   rs2, x0, build # if shift == 0, (1<<0)-1 = 0, mask is 0
-    add   t3, rs2, x0    # t3 = shift (sll counter)
-mask_sll:
-    add   t2, t2, t2     # t2 <<= 1
-    addi  t3, t3, -1
-    beq   t3, x0, build
-    beq   x0, x0, mask_sll
-build:
-    addi  t2, t2, -1     # t2 = (1 << shift) - 1  (low_ones)
-    addi  t3, x0, 32
-    sub   t3, t3, rs2    # t3 = 32 - shift
-    beq   t3, x0, apply  # if shift == 32 nothing to shift (undefined anyway)
+    # Step 2: logical right shift
+    [srl  rd, rs1, rs2]  # rd = srl(rs1, rs2)
+
+    beq   t6, x0, done  # positive → no sign extension needed
+
+    # Step 3: re-mask shift; early exit if shift == 0 mod 32
+    addi  t0, x0, 31
+    and   t3, rs2, t0   # t3 = shift & 31 (fixes unmasked-rs2 bug for rs2 > 31)
+    beq   t3, x0, done  # shift == 0 mod 32 → sra(x, 0) = x
+
+    # Step 4: sign_mask = -1 << (32 - shift)
+    addi  t2, x0, -1    # t2 = 0xFFFFFFFF
+    addi  t4, x0, 32
+    sub   t4, t4, t3    # t4 = 32 - (shift & 31)
 ext_sll:
-    add   t2, t2, t2     # t2 <<= 1  (sign_mask <<= 1)
-    addi  t3, t3, -1
-    beq   t3, x0, apply
+    add   t2, t2, t2    # t2 <<= 1
+    addi  t4, t4, -1
+    beq   t4, x0, apply
     beq   x0, x0, ext_sll
 apply:
-    or    rd, rd, t2     # rd = srl_result | sign_mask
+    or    rd, rd, t2
 done:
 ```
 
@@ -556,29 +550,43 @@ uint32_t slt(uint32_t a, uint32_t b) {
 ```
 
 ```asm
-sub   x6, x10, x11      ->  diff      = a - b
-xor   x5, x10, x11      ->  a ^ b
-xor   x7, x10, x6       ->  a ^ diff
-and   x5, x5, x7        ->  overflow  = (a^b) & (a^diff)
-xor   x6, x6, x5        ->  corrected = diff ^ overflow
-srli  x12, x6, 31       ->  return corrected >> 31
+sub  t0, rs1, rs2   # diff      = rs1 - rs2
+xor  t1, rs1, rs2   # t1        = rs1 ^ rs2          (derived)
+xor  t2, rs1, t0    # t2        = rs1 ^ diff          (derived)
+and  t1, t1, t2     # overflow  = (rs1^rs2) & (rs1^diff)
+xor  t0, t0, t1     # corrected = diff ^ overflow     (derived; t1,t2 now free)
+[srl rd,  t0, 31]   # rd        = corrected >> 31     (derived)
 ```
 
 ==== sltu
 
 ```c
 uint32_t sltu(uint32_t a, uint32_t b) {
-    uint32_t diff = a - b;
-    uint32_t corrected    = (~a & b) | (~(a ^ b) & diff);
-    return corrected >> 31;
+    uint32_t diff   = a - b;
+    // borrow generated where a=0,b=1; propagated where a==b and diff borrows from below
+    uint32_t borrow = (~a & b) | (~(a ^ b) & diff);
+    return borrow >> 31;
 }
+```
+
+```asm
+sub   t0, rs1, rs2   # diff      = rs1 - rs2
+not   t1, rs1        # t1        = ~rs1               (derived)
+and   t2, t1, rs2    # t2        = ~rs1 & rs2         (borrow generated)
+xor   t3, rs1, rs2   # t3        = rs1 ^ rs2          (derived)
+not   t3, t3         # t3        = ~(rs1 ^ rs2)       (derived)
+and   t3, t3, t0     # t3        = ~(rs1^rs2) & diff  (borrow propagated)
+or    t2, t2, t3     # borrow    = generated | propagated
+[srl  rd,  t2, 31]   # rd        = borrow >> 31       (derived)
 ```
 
 ==== Bne
 
 ```asm
-sub  t0, rs1, rs2    # t0 = 0 only if rs1 == rs2
-beq  t0, x0, label
+sub  t0, rs1, rs2
+beq  t0, x0, skip    # rs1 == rs2, skip the jump
+beq  x0, x0, target
+skip:
 ```
 
 ==== Bge - Branch greather than or equal
