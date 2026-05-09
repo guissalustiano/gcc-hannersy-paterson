@@ -290,6 +290,25 @@ sw
 xor
 xori
 
+except:
+- Memory Order:
+  - `fence`   - Instruction fence
+  - `fence.i` - Fence
+  - `sfence.vma` - Address Transalation Fence
+- CSR Access:
+  - `CSRRWI` - CSR Read/Write Immediate
+  - `CSRRSI` - CSR Read/Set Immediate
+  - `CSRRCI` - CSR Read/Clear Immediate
+  - `CSRRW`  - CSR Read/Write
+  - `CSRRS`  - CSR Read/Set
+  - `CSRRC`  - CSR Read/Clear
+- System:
+  - `ECALL` - Enviroemnt Call
+  - `EBREAK` - Enviroment Breakpoint
+  - `SRET` - Supervisior Exception Return
+  - `WFI` - Wait for Interrupt
+
+
 
 == Monociclo rv32i - sc3
 
