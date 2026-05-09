@@ -666,24 +666,172 @@ This requires that `pool_entry` fits in a 12-bit signed offset from `x0` (addres
 )
 
 ==== LB
-- Needs to mask correct value
 
-==== LH
-- Needs to mask correct value
+Since the processor only provides word-level memory access (`lw`), a byte load is emulated in three steps: load the containing word, shift the target byte to bit 31, then arithmetic-right-shift by 24 to sign-extend it into the full register.
 
-==== LHU
-- Needs to mask correct value
+Because `offset` is a compile-time constant, `byte_pos = offset & 3` (0, 1, 2, or 3) is also known at compile time, so all shift amounts are constants.
+
+```c
+int32_t lb(uint32_t base, int32_t offset) {
+    uint32_t addr          = base + offset;
+    uint32_t aligned_addr  = addr & ~3u;           // round down to word boundary
+    uint32_t word          = *(uint32_t *)aligned_addr;     // lw
+    uint32_t byte_pos      = addr & 3u;            // 0‥3: which byte within word
+    uint32_t left_shift    = (3u - byte_pos) * 8u; // bits to move target byte → bit 31
+    uint32_t raised        = word << left_shift;   // sll: target byte now at [31:24]
+    int32_t  result        = (int32_t)raised >> 24; // sra: sign-extend back to [7:0]
+    return result;
+}
+```
+
+```asm
+# lb rd, offset(rs1)   (byte_pos = offset & 3, compile-time constant: 0–3)
+lw    t0, (offset & ~3)(rs1)        # load containing word
+[sll  t0, t0, (3 - byte_pos) * 8]  # move target byte to bits [31:24]
+[sra  rd,  t0, 24]                  # arithmetic right-shift → sign-extends byte
+```
 
 ==== LBU
-- Needs to mask correct value
+
+Identical to LB but uses a logical (unsigned) right-shift to zero-extend instead of sign-extend.
+
+```c
+uint32_t lbu(uint32_t base, int32_t offset) {
+    uint32_t addr          = base + offset;
+    uint32_t aligned_addr  = addr & ~3u;
+    uint32_t word          = *(uint32_t *)aligned_addr;      // lw
+    uint32_t byte_pos      = addr & 3u;
+    uint32_t left_shift    = (3u - byte_pos) * 8u;
+    uint32_t raised        = word << left_shift;             // sll: target byte → [31:24]
+    uint32_t result        = raised >> 24u;                  // srl: zero-extend to [7:0]
+    return result;
+}
+```
+
+```asm
+# lbu rd, offset(rs1)   (byte_pos = offset & 3, compile-time constant: 0–3)
+lw    t0, (offset & ~3)(rs1)        # load containing word
+[sll  t0, t0, (3 - byte_pos) * 8]  # move target byte to bits [31:24]
+[srl  rd,  t0, 24]                  # logical right-shift → zero-extends byte
+```
+
+==== LH
+
+Halfwords are 2-byte aligned, so `hw_pos = (offset >> 1) & 1` is 0 or 1 (compile-time constant). Shifting the target halfword to bits [31:16] and then arithmetic-right-shifting by 16 produces a sign-extended result in one unified sequence.
+
+```c
+int32_t lh(uint32_t base, int32_t offset) {
+    uint32_t addr          = base + offset;
+    uint32_t aligned_addr  = addr & ~3u;
+    uint32_t word          = *(uint32_t *)aligned_addr;      // lw
+    uint32_t hw_pos        = (addr >> 1u) & 1u;  // 0 or 1: which halfword within word
+    uint32_t left_shift    = (1u - hw_pos) * 16u; // bits to move target halfword → bit 31
+    uint32_t raised        = word << left_shift;             // sll: target hw → [31:16]
+    int32_t  result        = (int32_t)raised >> 16;          // sra: sign-extend to [15:0]
+    return result;
+}
+```
+
+```asm
+# lh rd, offset(rs1)   (hw_pos = (offset >> 1) & 1, compile-time constant: 0 or 1)
+lw    t0, (offset & ~3)(rs1)        # load containing word
+[sll  t0, t0, (1 - hw_pos) * 16]   # move target halfword to bits [31:16]
+[sra  rd,  t0, 16]                  # arithmetic right-shift → sign-extends halfword
+```
+
+==== LHU
+
+```c
+uint32_t lhu(uint32_t base, int32_t offset) {
+    uint32_t addr          = base + offset;
+    uint32_t aligned_addr  = addr & ~3u;
+    uint32_t word          = *(uint32_t *)aligned_addr;      // lw
+    uint32_t hw_pos        = (addr >> 1u) & 1u;
+    uint32_t left_shift    = (1u - hw_pos) * 16u;
+    uint32_t raised        = word << left_shift;             // sll: target hw → [31:16]
+    uint32_t result        = raised >> 16u;                  // srl: zero-extend to [15:0]
+    return result;
+}
+```
+
+```asm
+# lhu rd, offset(rs1)   (hw_pos = (offset >> 1) & 1, compile-time constant: 0 or 1)
+lw    t0, (offset & ~3)(rs1)        # load containing word
+[sll  t0, t0, (1 - hw_pos) * 16]   # move target halfword to bits [31:16]
+[srl  rd,  t0, 16]                  # logical right-shift → zero-extends halfword
+```
 
 === Store
 
 ==== SB
-- Load, mask build, store
+
+A byte store is a read-modify-write: load the containing word, clear the target byte lane, insert the new byte, store back. All shift amounts are compile-time constants derived from `byte_pos = offset & 3`.
+
+```c
+void sb(uint32_t base, int32_t offset, uint32_t rs2) {
+    uint32_t addr          = base + offset;
+    uint32_t aligned_addr  = addr & ~3u;
+    uint32_t byte_pos      = addr & 3u;
+    uint32_t shift         = byte_pos * 8u;
+    uint32_t old_word      = *(uint32_t *)aligned_addr;      // lw
+    uint32_t new_byte      = (rs2 & 0xFFu) << shift;         // sll: position new byte
+    uint32_t byte_mask     = 0xFFu << shift;                 // sll: mask at same position
+    uint32_t cleared_word  = old_word & ~byte_mask;          // and: erase target lane
+    uint32_t new_word      = cleared_word | new_byte;        // or:  insert new byte
+    *(uint32_t *)aligned_addr = new_word;                    // sw
+}
+```
+
+```asm
+# sb rs2, offset(rs1)   (byte_pos = offset & 3, compile-time constant: 0–3)
+lw    t0, (offset & ~3)(rs1)        # t0 = old word
+addi  t1, x0, 255                   # t1 = 0xFF
+and   t2, rs2, t1                   # t2 = rs2 & 0xFF  (isolate low byte)
+[sll  t2, t2, byte_pos * 8]         # position new byte
+[sll  t1, t1, byte_pos * 8]         # position byte mask
+not   t1, t1                        # t1 = ~mask  (derived)
+and   t0, t0, t1                    # clear target lane in old word
+or    t0, t0, t2                    # insert new byte
+sw    t0, (offset & ~3)(rs1)        # store back
+```
+
+Each SB costs one `lw` (2 cycles) plus one `sw` (5 cycles) = 7 memory cycles.
 
 ==== SH
-- Load, mask build, store
+
+Same read-modify-write pattern as SB but for 16-bit halfwords. `hw_pos = (offset >> 1) & 1` is 0 or 1. Constructing 0xFFFF uses `addi + sll + addi` since the value exceeds the 12-bit immediate range.
+
+```c
+void sh(uint32_t base, int32_t offset, uint32_t rs2) {
+    uint32_t addr          = base + offset;
+    uint32_t aligned_addr  = addr & ~3u;
+    uint32_t hw_pos        = (addr >> 1u) & 1u;
+    uint32_t shift         = hw_pos * 16u;
+    uint32_t old_word      = *(uint32_t *)aligned_addr;      // lw
+    uint32_t new_hw        = (rs2 & 0xFFFFu) << shift;       // sll: position new halfword
+    uint32_t hw_mask       = 0xFFFFu << shift;               // sll: mask at same position
+    uint32_t cleared_word  = old_word & ~hw_mask;            // and: erase target lane
+    uint32_t new_word      = cleared_word | new_hw;          // or:  insert new halfword
+    *(uint32_t *)aligned_addr = new_word;                    // sw
+}
+```
+
+```asm
+# sh rs2, offset(rs1)   (hw_pos = (offset >> 1) & 1, compile-time constant: 0 or 1)
+lw    t0, (offset & ~3)(rs1)        # t0 = old word
+addi  t1, x0, 1
+[sll  t1, t1, 16]                   # t1 = 0x10000
+addi  t1, t1, -1                    # t1 = 0xFFFF
+and   t2, rs2, t1                   # t2 = rs2 & 0xFFFF  (isolate low halfword)
+[sll  t2, t2, hw_pos * 16]          # position new halfword
+[sll  t1, t1, hw_pos * 16]          # position halfword mask
+not   t1, t1                        # t1 = ~mask  (derived)
+and   t0, t0, t1                    # clear target lane in old word
+or    t0, t0, t2                    # insert new halfword
+sw    t0, (offset & ~3)(rs1)        # store back
+```
+
+Each SH costs one `lw` (2 cycles) plus one `sw` (5 cycles) = 7 memory cycles.
 
 === Jump
 
