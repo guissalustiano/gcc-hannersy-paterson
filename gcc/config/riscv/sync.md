@@ -39,6 +39,9 @@
   [(match_operand:SI 0 "const_int_operand" "")] ;; model
   ""
   {
+    if (!TARGET_FENCE)
+      DONE;
+
     enum memmodel model = memmodel_base (INTVAL (operands[0]));
 
     if (TARGET_ZTSO && model == MEMMODEL_SEQ_CST)

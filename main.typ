@@ -251,6 +251,10 @@ Suporta o minimo de intruções para suportar toda a linguagem C
 == Monociclo sem fance e controle - sc2
 Supporta todas as instruções do rv32i instruções de mem. ordering, csr acess e system
 
+Target: `rvsc2`
+
+Flags equivalentes: `-march=rv32i -mabi=ilp32 -mno-fence`
+
 Instruction:
 - add
 - addi
@@ -890,6 +894,80 @@ double:
 
 === GCC flags and target configuration
 
+Each target (sc0–sc7) is exposed as a named GCC target triple of the form `rv-scN-unknown-elf`, allowing students to invoke the compiler without memorising flag combinations.
+For sc2 specifically, the corresponding triple is `rvsc2-unknown-elf`, and the compiler is invoked as:
+
+```sh
+rvsc2-unknown-elf-gcc program.c -o program
+```
+
+This is equivalent to:
+
+```sh
+riscv32-unknown-elf-gcc program.c -o program \
+    -march=rv32i -mabi=ilp32 \
+    -mno-fence
+```
+
+==== Building the toolchain
+
+```sh
+../gcc/configure \
+    --target=rvsc2-unknown-elf \
+    --prefix=$(pwd)/install \
+    --enable-languages=c
+```
+
+==== The `-mno-fence` option
+
+The standard rv32i base ISA includes three memory-ordering instructions (`fence`, `fence.i`, `sfence.vma`) and several CSR and system instructions that the educational processor hardware does not implement.
+A new boolean option `mfence` is added to `gcc/config/riscv/riscv.opt`:
+
+```
+mfence
+Target Var(TARGET_FENCE) Init(1)
+Enable fence instruction emission (-mno-fence suppresses all fence instructions).
+```
+
+`Init(1)` leaves fence enabled for all other RISC-V targets.
+`-mno-fence` sets `TARGET_FENCE` to 0.
+
+The only place in the RISC-V backend that emits fence RTL under ordinary C compilation is the `mem_thread_fence` pattern in `gcc/config/riscv/sync.md`.
+A single early-exit guard is added at the top of its body:
+
+```
+if (!TARGET_FENCE)
+  DONE;
+```
+
+When `TARGET_FENCE` is 0, the expand completes immediately without emitting any insn, making every `__atomic_thread_fence()` call a no-op at the RTL level.
+CSR access instructions (`csrrw`, `csrrs`, etc.) and system instructions (`ecall`, `ebreak`, etc.) are never emitted by GCC for standard C programs; no additional suppression is needed.
+
+==== Custom target triple
+
+Registering a separate triple (`rvsc2-unknown-elf`) rather than relying on runtime flags ensures:
+- Students cannot accidentally omit a required flag.
+- The default specs (linker script, start files, library paths) are already correct for the educational memory map.
+- Different sc targets can coexist in the same toolchain installation via multilib.
+
+Three changes to `gcc/config.gcc` wire up the new triple:
+
++ The early cpu-type block is extended to recognise `rvsc2*` and set `cpu_type=riscv`, activating the RISC-V backend.
++ A new OS block `rvsc2-*-elf*` sets `tm_file` to include `riscv/rvsc2.h` and reuses the standard `riscv/t-riscv` build rules.
++ The target-defaults block is extended to match `rvsc2-*-*` triples, hardcode `xlen=32`, and pre-fill `with_arch=rv32i` and `with_abi=ilp32` when not overridden at configure time.
+
+`gcc/config/riscv/rvsc2.h` is the spec header for the new target.
+It inherits all ELF defaults from `riscv/elf.h` and adds a single `CC1_SPEC` override:
+
+```c
+#include "elf.h"
+
+#undef CC1_SPEC
+#define CC1_SPEC "%{!mfence:-mno-fence}"
+```
+
+`CC1_SPEC` is expanded by the GCC driver before invoking the compiler proper.
+The `%{!mfence:...}` condition injects `-mno-fence` unless the user explicitly passed `-mfence`, ensuring `TARGET_FENCE` is always 0 for this target by default.
 
 = Results
 

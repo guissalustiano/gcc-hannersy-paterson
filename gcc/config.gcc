@@ -562,7 +562,7 @@ powerpc*-*-*)
 pru-*-*)
 	cpu_type=pru
 	;;
-riscv*)
+riscv* | rvsc2*)
 	cpu_type=riscv
 	extra_objs="riscv-builtins.o riscv-c.o riscv-sr.o riscv-shorten-memrefs.o riscv-selftests.o riscv-string.o"
 	extra_objs="${extra_objs} riscv-v.o riscv-vsetvl.o riscv-vector-costs.o riscv-avlprop.o riscv-vect-permconst.o"
@@ -2632,6 +2632,14 @@ riscv*-*-elf* | riscv*-*-rtems*)
 	# Force .init_array support.  The configure script cannot always
 	# automatically detect that GAS supports it, yet we require it.
 	gcc_cv_initfini_array=yes
+	;;
+rvsc2-*-elf*)
+	tm_file="elfos.h newlib-stdint.h ${tm_file} riscv/rvsc2.h"
+	tmake_file="${tmake_file} riscv/t-riscv"
+	gnu_ld=yes
+	gas=yes
+	gcc_cv_initfini_array=yes
+	enable_multilib=no
 	;;
 riscv*-*-freebsd*)
 	tm_file="${tm_file} elfos.h ${fbsd_tm_file} riscv/freebsd.h"
@@ -4839,12 +4847,17 @@ case "${target}" in
 		esac
 		;;
 
-	riscv*-*-*)
+	riscv*-*-* | rvsc2-*-*)
 		supported_defaults="abi arch cpu tune riscv_attribute isa_spec tls cmodel"
 
 		case "${target}" in
 		riscv-* | riscv32*) xlen=32 ;;
 		riscv64*) xlen=64 ;;
+		rvsc2-*)
+			xlen=32
+			with_arch=${with_arch:-rv32i}
+			with_abi=${with_abi:-ilp32}
+			;;
 		*) echo "Unsupported RISC-V target ${target}" 1>&2; exit 1 ;;
 		esac
 
