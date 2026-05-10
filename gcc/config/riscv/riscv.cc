@@ -3025,6 +3025,14 @@ riscv_split_symbol (rtx temp, rtx addr, machine_mode mode, rtx *low_out)
 	break;
 
       case SYMBOL_PCREL:
+	if (!TARGET_AUIPC)
+	  {
+	    /* auipc is disabled; fall back to absolute lui+lo12 addressing. */
+	    rtx high = gen_rtx_HIGH (Pmode, copy_rtx (addr));
+	    high = riscv_force_temporary (temp, high);
+	    *low_out = gen_rtx_LO_SUM (Pmode, high, addr);
+	    break;
+	  }
 	{
 	  static unsigned seqno;
 	  char buf[32];
@@ -7828,6 +7836,16 @@ riscv_legitimize_call_address (rtx addr)
 	  return sw_guarded;
 	}
 
+      return reg;
+    }
+
+  /* When auipc is disabled the "call func" assembler pseudo would expand to
+     auipc+jalr, which is not available.  Force the callee into a register so
+     the jalr alternative is selected, producing a lui+jalr absolute call.  */
+  if (!TARGET_AUIPC && !REG_P (addr))
+    {
+      rtx reg = RISCV_CALL_ADDRESS_TEMP (Pmode);
+      riscv_emit_move (reg, addr);
       return reg;
     }
 

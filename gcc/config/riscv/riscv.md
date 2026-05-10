@@ -2478,7 +2478,7 @@
 		  (match_operand:P 2 "const_int_operand")
 		  (pc)]
 	    UNSPEC_AUIPC))]
-  ""
+  "TARGET_AUIPC"
   ".LA%2: auipc\t%0,%h1"
   [(set_attr "type" "auipc")
    (set_attr "cannot_copy" "yes")])

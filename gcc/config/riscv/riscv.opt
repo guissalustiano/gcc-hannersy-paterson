@@ -424,6 +424,10 @@ mfence
 Target Var(TARGET_FENCE) Init(1)
 Enable fence instruction emission (-mno-fence suppresses all fence instructions).
 
+mauipc
+Target Var(TARGET_AUIPC) Init(1)
+Enable auipc instruction emission (-mno-auipc uses absolute lui+lo12 addressing instead).
+
 mautovec-segment
 Target Integer Var(riscv_mautovec_segment) Init(1)
 Enable (default) or disable generation of vector segment load/store instructions.

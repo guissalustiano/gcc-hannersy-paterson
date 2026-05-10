@@ -1131,6 +1131,49 @@ awk '/^[[:space:]]*(beq|bne|blt|bge|bltu|bgeu|jal|jalr)/ { branch=1; next }
 
 O teste cobre: `if/else`, `for`, `while`, `do-while`, chamadas de função e retornos.
 
+=== Ausência de auipc em sc1
+
+Para validar que o target sc1 não emite `auipc` — instrução não implementada no hardware — dois casos são testados: aritmética simples e chamada de função.
+
+==== Aritmética simples
+
+```c
+// test/sc1_add.c
+int add(int a, int b) { return a + b; }
+```
+
+```sh
+rvsc1-unknown-elf-gcc -S -O1 test/sc1_add.c -o sc1_add.s
+
+grep auipc sc1_add.s && echo FAIL || echo PASS
+```
+
+O assembly gerado contém apenas `addi`, `lw`, `sw` e `jr ra` — todos suportados pelo sc1.
+
+==== Chamada de função
+
+```c
+// test/sc1_call.c
+int foo(int x);
+int bar(int x) { return foo(x + 1); }
+```
+
+```sh
+rvsc1-unknown-elf-gcc -S -O1 test/sc1_call.c -o sc1_call.s
+
+grep auipc sc1_call.s && echo FAIL || echo PASS
+```
+
+O assembly gerado usa endereçamento absoluto via `lui`+`jalr` em vez do pseudo `call` (que o montador expandiria para `auipc`+`jalr`):
+
+```asm
+lui   a5,%hi(foo)
+addi  t1,a5,%lo(foo)
+jalr  t1
+```
+
+Como a sequência `lui`+`jalr` não corresponde ao padrão `auipc`+`jalr`, o linker não a relaxa para `jal`, garantindo que essa instrução também não seja emitida.
+
 === Ausência de fence em sc2
 
 Para validar que o target sc2 suprime corretamente a instrução `fence`, o teste compila `test/fence.c` e inspeciona o assembly gerado para a função `barrier`.
