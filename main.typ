@@ -465,20 +465,39 @@ Para programas de alunos típicos (aritmética FP sem tratamento de exceções),
     --with-newlib
 ```
 
-== Monociclo atomico - sc7
-Suporta atomico:
+== Monociclo atômico - sc7
 
-amoadd.w, amoadd.d
-amoand.w, amoanc.d
-amomax.w, amomax.d
-amomaxu.w, amomaxu.c
-amomin.w, amomon.c
-amominu.w, amominu.d
-amoor.w, amoor.d
-amoswap.w, amoswap.d
-amoxor.w, amoxor.d
-lr.w, lr.d
-sc.w,sc.d
+Target: `rvsc7`
+
+Flags equivalentes: `-march=rv64imafd_zicsr -mabi=lp64d`
+
+Suporta todas as instruções do sc6 mais a extensão A (operações atômicas sobre memória).
+As variantes `.w` operam em 32 bits (sign-extend para 64); as variantes `.d` operam em 64 bits.
+
+Load-reserved e store-conditional:
+- `lr.w`, `lr.d` — load-reserved
+- `sc.w`, `sc.d` — store-conditional
+
+AMO (atomic memory operations):
+- `amoadd.w`, `amoadd.d` — adição atômica
+- `amoand.w`, `amoand.d` — AND atômico
+- `amoor.w`, `amoor.d` — OR atômico
+- `amoxor.w`, `amoxor.d` — XOR atômico
+- `amoswap.w`, `amoswap.d` — swap atômico
+- `amomax.w`, `amomax.d` — máximo assinado atômico
+- `amomaxu.w`, `amomaxu.d` — máximo não-assinado atômico
+- `amomin.w`, `amomin.d` — mínimo assinado atômico
+- `amominu.w`, `amominu.d` — mínimo não-assinado atômico
+
+=== Compilando o toolchain
+
+```sh
+../gcc/configure \
+    --target=rvsc7-unknown-elf \
+    --prefix=$(pwd)/install \
+    --enable-languages=c \
+    --with-newlib
+```
 
 
 = Método de Trabalho

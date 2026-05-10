@@ -1257,6 +1257,7 @@ case $cpu-$vendor in
 			| rvsc4 \
 			| rvsc5 \
 			| rvsc6 \
+			| rvsc7 \
 			| rl78 | romp | rs6000 | rx \
 			| s390 | s390x \
 			| score \
