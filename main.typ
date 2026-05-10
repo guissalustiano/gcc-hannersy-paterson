@@ -449,6 +449,12 @@ Conversões (rv64):
 - `fcvt.w.d`, `fcvt.wu.d`, `fcvt.l.d`, `fcvt.lu.d` — double → int
 - `fcvt.s.d`, `fcvt.d.s` — conversão entre single e double
 
+=== Limitação: garantia de instrução
+
+O flag `-march=rv64imfd_zicsr` informa ao GCC quais instruções ele _pode_ emitir — não impede a emissão de tudo dentro das extensões habilitadas. Em particular, `Zicsr` está no march porque a especificação RISC-V 20191213 exige quando F/D estão presentes (para o registrador `fcsr`), mas isso significa que o GCC _pode_ emitir instruções CSR (`csrrw`, `csrrs`, etc.) se o programa usar tratamento de exceções de ponto flutuante (`fesetround`, `feclearexcept`, `-ftrapping-math`).
+
+Para programas de alunos típicos (aritmética FP sem tratamento de exceções), o GCC não emite instruções CSR. Porém, a garantia não é absoluta — se um aluno usar a API `<fenv.h>`, instruções CSR serão geradas. Uma solução completa exigiria uma opção `-mno-csr` análoga ao `-mno-fence`, guardando todos os padrões CSR no backend RISC-V. Isso está pendente de investigação.
+
 === Compilando o toolchain
 
 ```sh
