@@ -412,40 +412,52 @@ As variantes com sufixo W operam em 32 bits e estendem o resultado a 64 bits por
     --with-newlib
 ```
 
-==  Monociclo float point - sc6
-support sc5 +
-Suporta extensão float point, apenas o green card do hannersy e patterson
-- float teve outras extensoes
+== Monociclo float point - sc6
 
-Instruction:
-fld, flw
-fsc,fsw
-fadd.s,fadd.c
-fsub.s, fsub.d
-fdiv.s, fdiv.d
-fsqrt.s, fsqrt.d
-fmadd.s, fmadd.d
-fmsub.s, fmjsub.d
-fmnadd.s, fmnadd.d
-fsgnj.s, fsgnj.d
-fsgnjn.s, fsgnjn.d
-fsgnjx.s, fsgnjx.d
-fmin.s, fmin.d
-fmax.s, fmax.c
-feq.s, feq.c
-flt.s, flt.c
-fle.s, fle.c
-fclass.s, fclass.c
-fmv.s.x, fmv.c.x
-fmv.x.s, fmv.x.c
-fcvt.c.s
-fcvt.s.w, fcvt.d.w
-fcvt.s.l, fcvt.c.wu
-fcvt.s.wu, fcvt.c.wu
-fcvt.w.s, scvt.l.c
-fcvt.l.s, fcvt.l.c
-fcvt.wu.s, fcvt.wu.c
-fcvt.lu.s, fcvt.lu.d
+Target: `rvsc6`
+
+Flags equivalentes: `-march=rv64imfd_zicsr -mabi=lp64d`
+
+Suporta todas as instruções do sc5 mais as extensões F (single) e D (double) de ponto flutuante, conforme o green card do H&P.
+
+Loads/stores:
+- `flw`, `fsw` — single precision
+- `fld`, `fsd` — double precision
+
+Aritmética:
+- `fadd.s`, `fadd.d`, `fsub.s`, `fsub.d`, `fmul.s`, `fmul.d`, `fdiv.s`, `fdiv.d`, `fsqrt.s`, `fsqrt.d`
+
+Multiply-add fusionado:
+- `fmadd.s`, `fmadd.d`, `fmsub.s`, `fmsub.d`, `fnmadd.s`, `fnmadd.d`, `fnmsub.s`, `fnmsub.d`
+
+Sinal, mínimo e máximo:
+- `fsgnj.s`, `fsgnj.d`, `fsgnjn.s`, `fsgnjn.d`, `fsgnjx.s`, `fsgnjx.d`
+- `fmin.s`, `fmin.d`, `fmax.s`, `fmax.d`
+
+Comparação e classificação:
+- `feq.s`, `feq.d`, `flt.s`, `flt.d`, `fle.s`, `fle.d`
+- `fclass.s`, `fclass.d`
+
+Move entre registradores inteiros e FP:
+- `fmv.w.x`, `fmv.x.w` — single (rv32 e rv64)
+- `fmv.d.x`, `fmv.x.d` — double (rv64)
+
+Conversões (rv64):
+- `fcvt.s.w`, `fcvt.s.wu`, `fcvt.s.l`, `fcvt.s.lu` — int → single
+- `fcvt.w.s`, `fcvt.wu.s`, `fcvt.l.s`, `fcvt.lu.s` — single → int
+- `fcvt.d.w`, `fcvt.d.wu`, `fcvt.d.l`, `fcvt.d.lu` — int → double
+- `fcvt.w.d`, `fcvt.wu.d`, `fcvt.l.d`, `fcvt.lu.d` — double → int
+- `fcvt.s.d`, `fcvt.d.s` — conversão entre single e double
+
+=== Compilando o toolchain
+
+```sh
+../gcc/configure \
+    --target=rvsc6-unknown-elf \
+    --prefix=$(pwd)/install \
+    --enable-languages=c \
+    --with-newlib
+```
 
 == Monociclo atomico - sc7
 Suporta atomico:
