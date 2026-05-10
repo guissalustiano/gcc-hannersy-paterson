@@ -67,6 +67,11 @@
    (match_operand:SI 2 "const_int_operand")] ;; model
   ""
   {
+    if (!TARGET_FENCE)
+      {
+	emit_move_insn (operands[0], operands[1]);
+	DONE;
+      }
     if (TARGET_ZTSO)
       emit_insn (gen_atomic_load_ztso<mode> (operands[0], operands[1],
 					     operands[2]));
@@ -82,6 +87,11 @@
    (match_operand:SI 2 "const_int_operand")] ;; model
   ""
   {
+    if (!TARGET_FENCE)
+      {
+	emit_move_insn (operands[0], operands[1]);
+	DONE;
+      }
     if (TARGET_ZTSO)
       emit_insn (gen_atomic_store_ztso<mode> (operands[0], operands[1],
 					      operands[2]));
