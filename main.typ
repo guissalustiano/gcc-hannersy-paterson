@@ -316,8 +316,54 @@ except:
 
 == Monociclo rv32i - sc3
 
+Target: `rvsc3`
+
+Flags equivalentes: `-march=rv32i -mabi=ilp32`
+
+Suporta todas as instruções do sc2 mais `fence`.
+CSR, system e `fence.i` não são emitidos pelo GCC para programas C normais.
+
 requisito:
 o gcc n pode gerar nenhuma nop para intrucoes de desvio pois eh mono ciclo, logo n tem necessidade
+
+=== NOPs em processadores pipeline e RISC-V
+
+Em processadores com pipeline, ao avaliar se um desvio condicional é tomado, o processador já buscou e começou a decodificar as instruções seguintes, criando um _hazard_ de controle:
+
+```asm
+beq  t0, x0, target   # decisão do desvio ainda não conhecida
+add  t1, t2, t3       # já está no pipeline!
+```
+
+Duas soluções clássicas existem:
+
+1. _Stall do pipeline_ — o hardware congela até o desvio ser resolvido, desperdiçando ciclos.
+2. _Branch delay slot_ — a ISA define arquiteturalmente que a instrução imediatamente após o desvio sempre executa. O compilador é responsável por preencher esse slot com uma instrução útil ou, quando não há nenhuma, com um `nop`. O MIPS adota essa abordagem.
+
+O RISC-V eliminou deliberadamente os branch delay slots, deixando o hazard de controle como responsabilidade exclusiva do hardware (stall ou predição de desvio). Essa decisão é documentada no manual da ISA @riscv-spec. // TODO: citar também Patterson & Waterman "The RISC-V Reader" cap. 2 após validar referência
+O compilador não emite nenhum `nop` especial após desvios — `beq` é simplesmente `beq`:
+
+```asm
+// MIPS: delay slot é parte do contrato arquitetural
+beq  $t0, $zero, target
+nop                        // obrigatório (ou instrução útil)
+
+// RISC-V: sem delay slot, hardware trata o hazard
+beq  t0, x0, target
+add  t1, t2, t3            // instrução seguinte normal, sem semântica especial
+```
+
+Como o processador educacional deste trabalho é _monociclo_ — cada instrução completa atomicamente antes da próxima começar — não existe pipeline, não existem hazards de controle e, portanto, não existe branch delay slot. O requisito do target sc3 é garantir que o GCC não emita tais NOPs, o que para RISC-V já é o comportamento natural do backend.
+
+=== Compilando o toolchain
+
+```sh
+../gcc/configure \
+    --target=rvsc3-unknown-elf \
+    --prefix=$(pwd)/install \
+    --enable-languages=c \
+    --with-newlib
+```
 
 == Monociclo rvi64 - sc4
 Suporta todas as instrucoes do rvi64
@@ -974,7 +1020,25 @@ The `%{!mfence:...}` condition injects `-mno-fence` unless the user explicitly p
 == Testes
 
 === Validating asm
-- generate only for 
+- generate only for
+
+=== Ausência de NOPs em instruções de desvio
+
+Para garantir que o GCC não emite `nop` após instruções de desvio, o teste inspeciona o assembly gerado para um conjunto de funções com desvios condicionais e incondicionais.
+
+O script verifica que nenhuma instrução `nop` aparece imediatamente após qualquer desvio (`beq`, `bne`, `blt`, `bge`, `bltu`, `bgeu`, `jal`, `jalr`):
+
+```sh
+# Compila e gera assembly
+rvsc3-unknown-elf-gcc -S -O1 branch_test.c -o branch_test.s
+
+# Falha se qualquer nop seguir imediatamente um desvio
+awk '/^[[:space:]]*(beq|bne|blt|bge|bltu|bgeu|jal|jalr)/ { branch=1; next }
+     branch && /^[[:space:]]*nop/ { print "FAIL: nop after branch at line " NR; exit 1 }
+     { branch=0 }' branch_test.s
+```
+
+O teste cobre: `if/else`, `for`, `while`, `do-while`, chamadas de função e retornos.
 
 === Validating result
 - Stone risc-v (sem syscall)
