@@ -386,16 +386,31 @@ Suporta todas as instruções do sc3 mais as instruções exclusivas do rv64i:
     --with-newlib
 ```
 
-== Monociclo rvi64 with multiplily - sc5
-Suporta todas as instrucoes do sc4 e M extension
-mul
-mulh
-mulhsu
-mulhu
-div
-divu
-rem
-remu
+== Monociclo rvi64 com multiplicação - sc5
+
+Target: `rvsc5`
+
+Flags equivalentes: `-march=rv64im -mabi=lp64`
+
+Suporta todas as instruções do sc4 mais a extensão M (multiplicação e divisão inteira):
+
+- Multiplicação: `mul`, `mulw`, `mulh`, `mulhu`, `mulhsu`
+- Divisão assinada: `div`, `divw`
+- Divisão não-assinada: `divu`, `divuw`
+- Resto assinado: `rem`, `remw`
+- Resto não-assinado: `remu`, `remuw`
+
+As variantes com sufixo W operam em 32 bits e estendem o resultado a 64 bits por sinal, seguindo a mesma convenção de `addw`, `subw` e demais instruções W do sc4.
+
+=== Compilando o toolchain
+
+```sh
+../gcc/configure \
+    --target=rvsc5-unknown-elf \
+    --prefix=$(pwd)/install \
+    --enable-languages=c \
+    --with-newlib
+```
 
 ==  Monociclo float point - sc6
 support sc5 +
