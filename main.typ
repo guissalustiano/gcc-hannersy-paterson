@@ -366,7 +366,25 @@ Como o processador educacional deste trabalho é _monociclo_ — cada instruçã
 ```
 
 == Monociclo rvi64 - sc4
-Suporta todas as instrucoes do rvi64
+
+Target: `rvsc4`
+
+Flags equivalentes: `-march=rv64i -mabi=lp64`
+
+Suporta todas as instruções do sc3 mais as instruções exclusivas do rv64i:
+
+- Memória 64 bits: `ld`, `sd`, `lwu`
+- Operações em word com resultado estendido a 64 bits (sufixo W): `addw`, `subw`, `addiw`, `sllw`, `srlw`, `sraw`, `slliw`, `srliw`, `sraiw`
+
+=== Compilando o toolchain
+
+```sh
+../gcc/configure \
+    --target=rvsc4-unknown-elf \
+    --prefix=$(pwd)/install \
+    --enable-languages=c \
+    --with-newlib
+```
 
 == Monociclo rvi64 with multiplily - sc5
 Suporta todas as instrucoes do sc4 e M extension
