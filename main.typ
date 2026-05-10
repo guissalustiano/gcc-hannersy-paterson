@@ -240,13 +240,34 @@ Dado a não existência de instruções que interajam com o PC, essa implementa�
 
 
 == Monociclo extendido - sc1
-Suporta o minimo de intruções para suportar toda a linguagem C
-- todas as instrucoes do sc0
-- jalr
-- lui
 
-=== Limitacoes
-- Não implementa auipc -> não funciona com programas muito longo pois n consegue fazer chamadas alem de XXX
+Target: `rvsc1`
+
+Flags equivalentes: `-march=rv32i -mabi=ilp32 -mno-fence -mno-auipc`
+
+Suporta todas as instruções do sc0 mais as instruções mínimas para suporte a funções em C:
+
+- Herda do sc0: `lw`, `sw`, `beq`, `add`, `addi`, `sub`, `and`, `or`
+- `jalr` — retorno de função e chamadas indiretas
+- `lui` — carregamento de endereços absolutos (metade alta de 32 bits)
+
+=== Compilando o toolchain
+
+```sh
+../gcc/configure \
+    --target=rvsc1-unknown-elf \
+    --prefix=$(pwd)/install \
+    --enable-languages=c \
+    --with-newlib
+```
+
+=== Limitações
+
+Não implementa `auipc` nem `jal`: o processador não tem acesso ao PC para aritmética de endereço. Consequentemente:
+
+- Todo código deve ser carregado em endereço absoluto fixo (sem PIC).
+- Chamadas de função são feitas via `lui`+`jalr` (endereço absoluto) em vez do pseudo `call` (que gera `auipc`+`jalr`, relaxado pelo linker para `jal`).
+- Referências a símbolos globais usam `lui`+`lo12` em vez de `auipc`+`lo12`.
 
 == Monociclo sem fance e controle - sc2
 Supporta todas as instruções do rv32i instruções de mem. ordering, csr acess e system
