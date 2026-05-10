@@ -1040,6 +1040,29 @@ awk '/^[[:space:]]*(beq|bne|blt|bge|bltu|bgeu|jal|jalr)/ { branch=1; next }
 
 O teste cobre: `if/else`, `for`, `while`, `do-while`, chamadas de função e retornos.
 
+=== Ausência de fence em sc2
+
+Para validar que o target sc2 suprime corretamente a instrução `fence`, o teste compila `test/fence.c` e inspeciona o assembly gerado para a função `barrier`.
+
+```c
+#include <stdatomic.h>
+atomic_int x;
+void barrier(void) { atomic_thread_fence(memory_order_seq_cst); }
+int load(void)     { return atomic_load(&x); }
+void store(int v)  { atomic_store(&x, v); }
+```
+
+O script verifica que nenhuma instrução `fence` é emitida pelo compilador:
+
+```sh
+rvsc2-unknown-elf-gcc -S -O1 test/fence.c -o fence.s
+
+# Falha se qualquer fence aparecer no assembly (excluindo comentários)
+grep -v '^\s*#' fence.s | grep -w 'fence' && echo FAIL || echo PASS
+```
+
+Com `TARGET_FENCE = 0`, o padrão `mem_thread_fence` em `sync.md` executa `DONE` imediatamente sem emitir nenhuma instrução, de modo que `barrier` se reduz a um retorno vazio.
+
 === Validating result
 - Stone risc-v (sem syscall)
 - RISC-v official test implementation
