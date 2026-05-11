@@ -2938,7 +2938,7 @@
 	(any_shift:SI
 	    (match_operand:SI 1 "register_operand" "  r")
 	    (match_operand:QI 2 "arith_operand"    " rI")))]
-  ""
+  "TARGET_SHIFT"
 {
   if (GET_CODE (operands[2]) == CONST_INT)
     operands[2] = GEN_INT (INTVAL (operands[2])
@@ -2963,6 +2963,22 @@
       SUBREG_PROMOTED_VAR_P (t) = 1;
       SUBREG_PROMOTED_SET (t, SRP_SIGNED);
       emit_move_insn (operands[0], t);
+      DONE;
+    }
+  /* sc1 synthesis: constant sll n via n repeated add (double = shift-left-1). */
+  if ((<CODE>) == ASHIFT && !TARGET_SHIFT && CONST_INT_P (operands[2]))
+    {
+      HOST_WIDE_INT shamt = INTVAL (operands[2]) & 31;
+      if (shamt == 0)
+	{
+	  emit_move_insn (operands[0], operands[1]);
+	  DONE;
+	}
+      rtx tmp = gen_reg_rtx (SImode);
+      emit_insn (gen_addsi3 (tmp, operands[1], operands[1]));
+      for (HOST_WIDE_INT i = 1; i < shamt; i++)
+	emit_insn (gen_addsi3 (tmp, tmp, tmp));
+      emit_move_insn (operands[0], tmp);
       DONE;
     }
 })

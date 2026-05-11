@@ -22,9 +22,9 @@ along with GCC; see the file COPYING3.  If not see
 #include "elf.h"
 
 /* sc1 adds jalr and lui to sc0 (rv32i base subset) but does not implement
-   auipc or fence.  Suppress both by default; -mfence/-mauipc can override.
-   The -mno-auipc flag redirects PC-relative addressing to absolute lui+lo12
-   and forces function calls through a register (lui+jalr) instead of the
-   auipc+jalr "call" pseudo-instruction.  */
+   auipc, fence, or shift instructions.  Suppress all by default.
+   -mno-auipc redirects PC-relative addressing to absolute lui+lo12 and forces
+   function calls through a register (lui+jalr).
+   -mno-shift synthesizes constant sll via repeated add; srl/sra are unsupported.  */
 #undef CC1_SPEC
-#define CC1_SPEC "%{!mfence:-mno-fence} %{!mauipc:-mno-auipc}"
+#define CC1_SPEC "%{!mfence:-mno-fence} %{!mauipc:-mno-auipc} %{!mshift:-mno-shift}"

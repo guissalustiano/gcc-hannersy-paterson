@@ -288,6 +288,19 @@ skip:
 
 O custo é 16 bytes (4 instruções) contra 4 bytes de um `bne` nativo. O registrador `t1` é consumido como temporário, sem conflito com valores vivos.
 
+==== Síntese de sll constante
+
+`sll rd, rs, n` com deslocamento constante é sintetizado via `add` repetido — cada dobramento equivale a um deslocamento de um bit à esquerda:
+
+```asm
+; slli a0, a0, 3  (shift left by 3)
+add a0, a0, a0     ; a0 = a0 << 1
+add a0, a0, a0     ; a0 = a0 << 2
+add a0, a0, a0     ; a0 = a0 << 3
+```
+
+O custo é `n` instruções `add` para um deslocamento de `n` bits.
+
 == Monociclo sem fance e controle - sc2
 Supporta todas as instruções do rv32i instruções de mem. ordering, csr acess e system
 
@@ -1247,6 +1260,29 @@ lui  t1,%hi(.L3)
 addi t1,t1,%lo(.L3)
 jr   t1
 .L2:
+```
+
+=== Síntese de sll em sc1
+
+Para validar que o target sc1 não emite `sll`/`slli` mas usa `add` para deslocamentos constantes:
+
+```c
+// test/sc1_shift.c
+int shift3(int x) { return x << 3; }
+```
+
+```sh
+rvsc1-unknown-elf-gcc -S -O1 test/sc1_shift.c -o sc1_shift.s
+
+grep -E '^\s+sll' sc1_shift.s && echo FAIL || echo PASS
+```
+
+O assembly gerado usa três `add` em vez de `slli`:
+
+```asm
+add a0, a0, a0
+add a0, a0, a0
+add a0, a0, a0
 ```
 
 === Ausência de fence em sc2

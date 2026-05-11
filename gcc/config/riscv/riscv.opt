@@ -428,6 +428,10 @@ mauipc
 Target Var(TARGET_AUIPC) Init(1)
 Enable auipc instruction emission (-mno-auipc uses absolute lui+lo12 addressing instead).
 
+mshift
+Target Var(TARGET_SHIFT) Init(1)
+Enable shift instruction emission (-mno-shift synthesizes sll via add; srl/sra unsupported).
+
 mautovec-segment
 Target Integer Var(riscv_mautovec_segment) Init(1)
 Enable (default) or disable generation of vector segment load/store instructions.
