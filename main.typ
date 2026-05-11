@@ -267,7 +267,12 @@ Não implementa `auipc` nem `jal`: o processador não tem acesso ao PC para arit
 
 - Todo código deve ser carregado em endereço absoluto fixo (sem PIC).
 - Chamadas de função são feitas via `lui`+`jalr` (endereço absoluto) em vez do pseudo `call` (que gera `auipc`+`jalr`, relaxado pelo linker para `jal`).
+- Desvios incondicionais dentro de funções (laços, `if`/`else`) são sintetizados via `lui`+`jalr` em vez de `j label` (`jal x0, label`).
 - Referências a símbolos globais usam `lui`+`lo12` em vez de `auipc`+`lo12`.
+
+==== Risco: registrador temporário nos saltos absolutos
+
+A síntese `lui t1,%hi(L); jalr x0,t1,%lo(L)` consome um registrador temporário que, no caso normal (`j label`), não seria necessário. O compilador aloca esse registrador via a análise de pseudo-registradores do RTL, sem conflito com valores vivos — mas o código gerado é maior (8 bytes em vez de 4) e mais lento.
 
 == Monociclo sem fance e controle - sc2
 Supporta todas as instruções do rv32i instruções de mem. ordering, csr acess e system
@@ -1173,6 +1178,33 @@ jalr  t1
 ```
 
 Como a sequência `lui`+`jalr` não corresponde ao padrão `auipc`+`jalr`, o linker não a relaxa para `jal`, garantindo que essa instrução também não seja emitida.
+
+=== Ausência de jal em sc1
+
+Para validar que o target sc1 não emite `jal` (desvio incondicional PC-relativo) em laços ou caminhos de controle:
+
+```c
+// test/sc1_loop.c
+int sum(int n) {
+    int s = 0;
+    for (int i = 0; i < n; i++) s += i;
+    return s;
+}
+```
+
+```sh
+rvsc1-unknown-elf-gcc -S -O1 test/sc1_loop.c -o sc1_loop.s
+
+grep -E '^\s+(j|jal)\b' sc1_loop.s && echo FAIL || echo PASS
+```
+
+O assembly gerado usa `lui`+`addi`+`jr` para saltos incondicionais em vez de `j label`:
+
+```asm
+lui   t1,%hi(.L2)
+addi  t1,t1,%lo(.L2)
+jr    t1
+```
 
 === Ausência de fence em sc2
 

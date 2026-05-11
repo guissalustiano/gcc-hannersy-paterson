@@ -3883,6 +3883,12 @@
   [(set (pc) (label_ref (match_operand 0 "" "")))]
   ""
 {
+  if (!TARGET_AUIPC)
+    /* jal (PC-relative unconditional jump) is not available.
+       Synthesise an absolute jump using lui+addi+jalr.
+       Like the existing "jump pseudo" long form, this clobbers t1.  */
+    return "lui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1";
+
   /* Use the long form (AUIPC+JALR) if the jump distance exceeds 1 MiB,
      or if the jump crosses section boundaries (e.g., from hot to cold
      section when -freorder-blocks-and-partition is used).
