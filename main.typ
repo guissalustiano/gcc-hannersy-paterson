@@ -274,6 +274,20 @@ Não implementa `auipc` nem `jal`: o processador não tem acesso ao PC para arit
 
 A síntese `lui t1,%hi(L); jalr x0,t1,%lo(L)` consome um registrador temporário que, no caso normal (`j label`), não seria necessário. O compilador aloca esse registrador via a análise de pseudo-registradores do RTL, sem conflito com valores vivos — mas o código gerado é maior (8 bytes em vez de 4) e mais lento.
 
+==== Síntese de bne
+
+`bne a,b,L` é sintetizado via inversão da condição:
+
+```asm
+beq  a, b, skip
+lui  t1, %hi(L)
+addi t1, t1, %lo(L)
+jr   t1
+skip:
+```
+
+O custo é 16 bytes (4 instruções) contra 4 bytes de um `bne` nativo. O registrador `t1` é consumido como temporário, sem conflito com valores vivos.
+
 == Monociclo sem fance e controle - sc2
 Supporta todas as instruções do rv32i instruções de mem. ordering, csr acess e system
 
@@ -1204,6 +1218,35 @@ O assembly gerado usa `lui`+`addi`+`jr` para saltos incondicionais em vez de `j 
 lui   t1,%hi(.L2)
 addi  t1,t1,%lo(.L2)
 jr    t1
+```
+
+=== Ausência de bne em sc1
+
+Para validar que o target sc1 não emite `bne` nativa em desvios condicionais:
+
+```c
+// test/sc1_branch.c
+int neq(int a, int b) {
+    if (a != b) return 1;
+    return 0;
+}
+```
+
+```sh
+rvsc1-unknown-elf-gcc -S -O0 test/sc1_branch.c -o sc1_branch.s
+
+grep -E '^\s+bne\b' sc1_branch.s && echo FAIL || echo PASS
+```
+
+O assembly gerado usa `beq`+`lui`+`addi`+`jr` em vez de `bne`:
+
+```asm
+beq  a4,a5,.L2
+li   a5,1
+lui  t1,%hi(.L3)
+addi t1,t1,%lo(.L3)
+jr   t1
+.L2:
 ```
 
 === Ausência de fence em sc2
