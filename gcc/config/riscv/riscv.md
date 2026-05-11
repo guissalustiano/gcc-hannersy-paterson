@@ -2981,6 +2981,73 @@
       emit_move_insn (operands[0], tmp);
       DONE;
     }
+  /* sc1 synthesis: srl via loop-based bit extraction using and/or/add/beq only. */
+  if ((<CODE>) == LSHIFTRT && !TARGET_SHIFT)
+    {
+      rtx rs1      = operands[1];
+      rtx result   = gen_reg_rtx (SImode);
+      rtx out_mask = gen_reg_rtx (SImode);
+      rtx in_mask  = gen_reg_rtx (SImode);
+      rtx tmp      = gen_reg_rtx (SImode);
+
+      emit_move_insn (result,   const0_rtx);
+      emit_move_insn (out_mask, const1_rtx);
+
+      if (CONST_INT_P (operands[2]))
+	{
+	  HOST_WIDE_INT sh = INTVAL (operands[2]) & 31;
+	  emit_move_insn (in_mask,
+			  gen_int_mode ((unsigned HOST_WIDE_INT)1 << sh,
+					SImode));
+	}
+      else
+	{
+	  rtx shift_count = gen_reg_rtx (SImode);
+	  emit_insn (gen_andsi3 (shift_count, operands[2], GEN_INT (31)));
+	  emit_move_insn (in_mask, const1_rtx);
+
+	  rtx sll_done = gen_label_rtx ();
+	  rtx sll_loop = gen_label_rtx ();
+	  rtx counter  = gen_reg_rtx (SImode);
+
+	  emit_cmp_and_jump_insns (shift_count, const0_rtx, EQ, NULL_RTX,
+				   SImode, 0, sll_done,
+				   profile_probability::uninitialized ());
+	  emit_move_insn (counter, shift_count);
+	  emit_label (sll_loop);
+	  emit_insn (gen_addsi3 (in_mask, in_mask, in_mask));
+	  emit_insn (gen_addsi3 (counter, counter, GEN_INT (-1)));
+	  emit_cmp_and_jump_insns (counter, const0_rtx, EQ, NULL_RTX,
+				   SImode, 0, sll_done,
+				   profile_probability::uninitialized ());
+	  emit_jump_insn (gen_jump (sll_loop));
+	  emit_barrier ();
+	  emit_label (sll_done);
+	}
+
+      rtx loop_label = gen_label_rtx ();
+      rtx skip_label = gen_label_rtx ();
+      rtx done_label = gen_label_rtx ();
+
+      emit_label (loop_label);
+      emit_cmp_and_jump_insns (in_mask, const0_rtx, EQ, NULL_RTX,
+			       SImode, 0, done_label,
+			       profile_probability::uninitialized ());
+      emit_insn (gen_andsi3 (tmp, rs1, in_mask));
+      emit_cmp_and_jump_insns (tmp, const0_rtx, EQ, NULL_RTX,
+			       SImode, 0, skip_label,
+			       profile_probability::uninitialized ());
+      emit_insn (gen_iorsi3 (result, result, out_mask));
+      emit_label (skip_label);
+      emit_insn (gen_addsi3 (out_mask, out_mask, out_mask));
+      emit_insn (gen_addsi3 (in_mask,  in_mask,  in_mask));
+      emit_jump_insn (gen_jump (loop_label));
+      emit_barrier ();
+      emit_label (done_label);
+
+      emit_move_insn (operands[0], result);
+      DONE;
+    }
 })
 
 (define_insn "<optab>di3"

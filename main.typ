@@ -301,6 +301,20 @@ add a0, a0, a0     ; a0 = a0 << 3
 
 O custo é `n` instruções `add` para um deslocamento de `n` bits.
 
+==== Síntese de srl
+
+`srl rd, rs1, rs2` é sintetizado extraindo cada bit de `rs1` da posição `shift` em diante e colocando-o na posição correspondente do resultado. O algoritmo usa apenas `and`, `or`, `add` e `beq`:
+
+```c
+result = 0; out_mask = 1; in_mask = 1 << shift;
+while (in_mask != 0) {
+    if ((rs1 & in_mask) != 0) result |= out_mask;
+    out_mask <<= 1; in_mask <<= 1;
+}
+```
+
+O custo é (32 − shift) iterações de ~7 instruções. Para `srl` variável, adiciona-se um loop de `shift` iterações para calcular `in_mask = 1 << shift`.
+
 == Monociclo sem fance e controle - sc2
 Supporta todas as instruções do rv32i instruções de mem. ordering, csr acess e system
 
@@ -1283,6 +1297,38 @@ O assembly gerado usa três `add` em vez de `slli`:
 add a0, a0, a0
 add a0, a0, a0
 add a0, a0, a0
+```
+
+=== Síntese de srl em sc1
+
+Para validar que o target sc1 não emite `srl`/`srli` mas usa o loop de extração de bits:
+
+```c
+// test/sc1_srl.c
+unsigned shr3(unsigned x) { return x >> 3; }
+```
+
+```sh
+rvsc1-unknown-elf-gcc -S -O1 test/sc1_srl.c -o sc1_srl.s
+
+grep -E '^\s+srl' sc1_srl.s && echo FAIL || echo PASS
+```
+
+O assembly gerado usa `and`, `or`, `add` e `beq` em vez de `srli`:
+
+```asm
+li   a5,8       # in_mask = 1 << 3
+li   a3,1       # out_mask = 1
+li   a0,0       # result = 0
+.L2:
+beq  a5,zero,.L4
+and  a2,a4,a5
+beq  a2,zero,.L3
+or   a0,a0,a3
+.L3:
+add  a3,a3,a3
+add  a5,a5,a5
+...
 ```
 
 === Ausência de fence em sc2
