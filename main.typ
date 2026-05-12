@@ -243,7 +243,7 @@ Dado a não existência de instruções que interajam com o PC, essa implementa�
 
 Target: `rvsc1`
 
-Flags equivalentes: `-march=rv32i -mabi=ilp32 -mno-fence -mno-auipc`
+Flags equivalentes: `-march=rv32i -mabi=ilp32 -mno-fence -mno-auipc -mno-shift -mno-xor -mno-ori -mno-andi`
 
 Suporta todas as instruções do sc0 mais as instruções mínimas para suporte a funções em C:
 
@@ -428,6 +428,26 @@ or    rd, rs1, t     # rd = rs1 | t
 ```
 
 O custo é 2 instruções (`li` + `or`) contra 1 instrução `ori` nativa. Para evitar que o passe `combine` do GCC reinsira o imediato diretamente no padrão `or`, a alternativa imediata do `define_insn` é desabilitada via atributo `enabled` quando `!TARGET_ORI`.
+
+==== Síntese de andi
+
+`andi rd, rs1, imm` é sintetizado carregando o imediato em um registrador temporário e usando `and` registro-registro:
+
+```asm
+; andi rd, rs1, imm
+li    t, imm         # t = imm  (addi t, x0, imm para pequenos; lui+addi para grandes)
+and   rd, rs1, t     # rd = rs1 & t
+```
+
+O custo é 2 instruções (`li` + `and`) contra 1 instrução `andi` nativa. A alternativa imediata do `define_insn "*and<mode>3"` é desabilitada via atributo `enabled` quando `!TARGET_ANDI`, impedindo que o passe `combine` reinsira o imediato.
+
+Um caso especial é a instrução de zero-extension `andi rd, rs, 0xff`, emitida pelo padrão `*zero_extendqi<SUPERQI:mode>2_internal` para converter um byte em inteiro. Esse padrão tem alternativa própria (não passa pelo `and<mode>3` expand) e é tratado por um `define_insn_and_split "*zero_extendqisi2_noandi"` que toma prioridade sobre o padrão andi quando `!TARGET_ANDI`. Após reload, o split gera:
+
+```asm
+; (unsigned char) rs  →  rd = rs & 0xff
+li    rd, 255        # rd = 0xff  (reutiliza rd como temporário; early-clobber garante rd ≠ rs)
+and   rd, rs, rd     # rd = rs & 0xff
+```
 
 == Monociclo sem fance e controle - sc2
 Supporta todas as instruções do rv32i instruções de mem. ordering, csr acess e system
@@ -1460,10 +1480,11 @@ rvsc1-unknown-elf-gcc -S -O1 test/sc1_sll_var.c -o sc1_sll_var.s
 grep -E '^\s+sll' sc1_sll_var.s && echo FAIL || echo PASS
 ```
 
-O assembly gerado usa `andi`+`add`+`beq` em vez de `sll`:
+O assembly gerado usa `li`+`and`+`add`+`beq` em vez de `sll` (com `andi` também sintetizado):
 
 ```asm
-andi  a1,a1,31
+li    a5,31
+and   a1,a1,a5     # andi sintetizado: a1 &= 31
 beq   a1,zero,.Ldone
 .Lloop:
     add   a0,a0,a0
@@ -1561,15 +1582,42 @@ addi  a5, a5, -1   # a5 = ~(a & b)
 and   a0, a5, a0   # a0 = ~(a&b) & (a|b) = a ^ b
 ```
 
-Para `xor_imm` com constante 5, `andi` é mantido nativo mas `ori` é sintetizado com `li`+`or` (pois `-mno-ori` está ativo):
+Para `xor_imm` com constante 5, tanto `andi` quanto `ori` são sintetizados (pois `-mno-andi` e `-mno-ori` estão ativos). O compilador carrega o imediato uma única vez num temporário e reutiliza-o para ambos:
 
 ```asm
-andi  a5, a0, 5    # a5 = a & 5
 li    a4, 5        # a4 = 5
+and   a5, a0, a4   # a5 = a & 5  (andi sintetizado)
 or    a0, a0, a4   # a0 = a | 5  (ori sintetizado)
 neg   a5, a5       # a5 = -(a & 5)
 addi  a5, a5, -1   # a5 = ~(a & 5)
 and   a0, a5, a0   # a0 = ~(a&5) & (a|5) = a ^ 5
+```
+
+=== Síntese de andi em sc1
+
+Para validar que o target sc1 não emite `andi` mas usa `li`+`and`:
+
+```c
+// test/sc1_andi.c
+int andi_test(int a) { return a & 5; }
+int and_reg(int a, int b) { return a & b; }
+```
+
+```sh
+rvsc1-unknown-elf-gcc -S -O1 test/sc1_andi.c -o sc1_andi.s
+
+grep -E '^\s+andi\b' sc1_andi.s && echo FAIL || echo PASS
+```
+
+`andi_test` usa `li`+`and` em vez de `andi`; `and_reg` mantém `and` nativo:
+
+```asm
+; andi_test
+li    a5, 5        # a5 = 5
+and   a0, a0, a5   # a0 = a & 5
+
+; and_reg
+and   a0, a0, a1   # a0 = a & b  (inalterado)
 ```
 
 === Síntese de ori em sc1

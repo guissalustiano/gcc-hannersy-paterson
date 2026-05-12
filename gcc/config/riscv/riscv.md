@@ -1710,6 +1710,9 @@
 	       (match_operand:X 2 "reg_or_const_int_operand")))]
   ""
 {
+  /* sc1 synthesis: andi rd, rs, imm → li t, imm; and rd, rs, t */
+  if (!TARGET_ANDI && CONST_INT_P (operands[2]))
+    operands[2] = force_reg (<MODE>mode, operands[2]);
   if (CONST_INT_P (operands[2]) && synthesize_and (operands))
     DONE;
 })
@@ -1721,7 +1724,11 @@
   ""
   "and%i2\t%0,%1,%2"
   [(set_attr "type" "logical")
-   (set_attr "mode" "<MODE>")])
+   (set_attr "mode" "<MODE>")
+   (set_attr_alternative "enabled"
+     [(const_string "yes")
+      (if_then_else (match_test "TARGET_ANDI")
+        (const_string "yes") (const_string "no"))])])
 
 ;; When we construct constants we may want to twiddle a single bit
 ;; by generating an IOR.  But the constant likely doesn't fit
@@ -1981,6 +1988,22 @@
     }
 })
 
+/* sc1 synthesis: andi rd, rs, 0xff → li rd, 0xff; and rd, rs, rd.
+   Must appear before *zero_extendqi<SUPERQI:mode>2_internal so that GCC
+   prefers this split over the andi alternative when !TARGET_ANDI.  */
+(define_insn_and_split "*zero_extendqisi2_noandi"
+  [(set (match_operand:SI 0 "register_operand"   "=&r")
+        (zero_extend:SI
+            (match_operand:QI 1 "register_operand" "  r")))]
+  "!TARGET_XTHEADMEMIDX && !TARGET_ANDI"
+  "#"
+  "&& reload_completed"
+  [(set (match_dup 0) (const_int 255))
+   (set (match_dup 0) (and:SI (match_dup 1) (match_dup 0)))]
+  { operands[1] = gen_lowpart (SImode, operands[1]); }
+  [(set_attr "move_type" "shift_shift")
+   (set_attr "type" "arith")
+   (set_attr "mode" "SI")])
 
 (define_insn "*zero_extendqi<SUPERQI:mode>2_internal"
   [(set (match_operand:SUPERQI 0 "register_operand"    "=r,r")

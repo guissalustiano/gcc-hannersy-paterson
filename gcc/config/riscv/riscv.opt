@@ -440,6 +440,10 @@ mori
 Target Var(TARGET_ORI) Init(1)
 Enable ori instruction emission (-mno-ori loads immediate into register before or).
 
+mandi
+Target Var(TARGET_ANDI) Init(1)
+Enable andi instruction emission (-mno-andi loads immediate into register before and).
+
 mautovec-segment
 Target Integer Var(riscv_mautovec_segment) Init(1)
 Enable (default) or disable generation of vector segment load/store instructions.
