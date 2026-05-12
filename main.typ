@@ -415,7 +415,19 @@ addi  t0, t0, -1     # t0 = ~(rs1 & rs2)
 and   rd, t0, t1     # rd = ~(rs1&rs2) & (rs1|rs2) = rs1 ^ rs2
 ```
 
-O custo é 5 instruções. Para `xori rd, rs1, imm`, a constante é absorvida diretamente em `andi`/`ori` pelo compilador, mantendo 5 instruções sem necessidade de `li`.
+O custo é 5 instruções para operandos registro. Com `-mno-ori` ativo (sc1), `xori rd, rs1, imm` sintetiza `ori` como `li`+`or`, resultando em 6 instruções no total.
+
+==== Síntese de ori
+
+`ori rd, rs1, imm` é sintetizado carregando o imediato em um registrador temporário e usando `or` registro-registro:
+
+```asm
+; ori rd, rs1, imm
+li    t, imm         # t = imm  (addi t, x0, imm para pequenos; lui+addi para grandes)
+or    rd, rs1, t     # rd = rs1 | t
+```
+
+O custo é 2 instruções (`li` + `or`) contra 1 instrução `ori` nativa. Para evitar que o passe `combine` do GCC reinsira o imediato diretamente no padrão `or`, a alternativa imediata do `define_insn` é desabilitada via atributo `enabled` quando `!TARGET_ORI`.
 
 == Monociclo sem fance e controle - sc2
 Supporta todas as instruções do rv32i instruções de mem. ordering, csr acess e system
@@ -1549,14 +1561,42 @@ addi  a5, a5, -1   # a5 = ~(a & b)
 and   a0, a5, a0   # a0 = ~(a&b) & (a|b) = a ^ b
 ```
 
-Para `xor_imm` com constante 5, o compilador absorve o imediato diretamente em `andi`/`ori` sem instrução `li` adicional:
+Para `xor_imm` com constante 5, `andi` é mantido nativo mas `ori` é sintetizado com `li`+`or` (pois `-mno-ori` está ativo):
 
 ```asm
 andi  a5, a0, 5    # a5 = a & 5
-ori   a0, a0, 5    # a0 = a | 5
+li    a4, 5        # a4 = 5
+or    a0, a0, a4   # a0 = a | 5  (ori sintetizado)
 neg   a5, a5       # a5 = -(a & 5)
 addi  a5, a5, -1   # a5 = ~(a & 5)
 and   a0, a5, a0   # a0 = ~(a&5) & (a|5) = a ^ 5
+```
+
+=== Síntese de ori em sc1
+
+Para validar que o target sc1 não emite `ori` mas usa `li`+`or`:
+
+```c
+// test/sc1_ori.c
+int ori_test(int a) { return a | 5; }
+int or_reg(int a, int b) { return a | b; }
+```
+
+```sh
+rvsc1-unknown-elf-gcc -S -O1 test/sc1_ori.c -o sc1_ori.s
+
+grep -E '^\s+ori\b' sc1_ori.s && echo FAIL || echo PASS
+```
+
+`ori_test` usa `li`+`or` em vez de `ori`; `or_reg` mantém `or` nativo:
+
+```asm
+; ori_test
+li    a5, 5        # a5 = 5
+or    a0, a0, a5   # a0 = a | 5
+
+; or_reg
+or    a0, a0, a1   # a0 = a | b  (inalterado)
 ```
 
 === Ausência de fence em sc2

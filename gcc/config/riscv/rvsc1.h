@@ -29,4 +29,4 @@ along with GCC; see the file COPYING3.  If not see
    -mno-xor synthesizes not (~x) via sub+addi; plain xor synthesis is future work.  */
 #undef CC1_SPEC
 #define CC1_SPEC \
-  "%{!mfence:-mno-fence} %{!mauipc:-mno-auipc} %{!mshift:-mno-shift} %{!mxor:-mno-xor}"
+  "%{!mfence:-mno-fence} %{!mauipc:-mno-auipc} %{!mshift:-mno-shift} %{!mxor:-mno-xor} %{!mori:-mno-ori}"

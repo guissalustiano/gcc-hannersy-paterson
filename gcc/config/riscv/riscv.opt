@@ -436,6 +436,10 @@ mxor
 Target Var(TARGET_XOR) Init(1)
 Enable xor/xori instruction emission (-mno-xor synthesizes not via sub+addi).
 
+mori
+Target Var(TARGET_ORI) Init(1)
+Enable ori instruction emission (-mno-ori loads immediate into register before or).
+
 mautovec-segment
 Target Integer Var(riscv_mautovec_segment) Init(1)
 Enable (default) or disable generation of vector segment load/store instructions.

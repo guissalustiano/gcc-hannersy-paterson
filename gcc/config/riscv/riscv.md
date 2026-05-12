@@ -1756,6 +1756,9 @@
       emit_insn (gen_andsi3 (operands[0],   not_and, ab_ior));
       DONE;
     }
+  /* sc1 synthesis: ori rd, rs, imm → li t, imm; or rd, rs, t */
+  if ((<CODE>) == IOR && !TARGET_ORI && CONST_INT_P (operands[2]))
+    operands[2] = force_reg (<MODE>mode, operands[2]);
   /* If synthesis of the logical op is successful, then no further code
      generation is necessary.  Else just generate code normally.  */
   if (CONST_INT_P (operands[2]) && synthesize_ior_xor (<OPTAB>, operands))
@@ -1769,7 +1772,12 @@
   "TARGET_XOR || (<CODE>) == IOR"
   "<insn>%i2\t%0,%1,%2"
   [(set_attr "type" "logical")
-   (set_attr "mode" "<MODE>")])
+   (set_attr "mode" "<MODE>")
+   (set_attr_alternative "enabled"
+     [(const_string "yes")
+      (if_then_else
+        (match_test "(<CODE>) == IOR ? TARGET_ORI : TARGET_XOR")
+        (const_string "yes") (const_string "no"))])])
 
 (define_insn "*<optab>si3_internal"
   [(set (match_operand:SI                 0 "register_operand" "=r,r")
