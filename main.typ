@@ -390,6 +390,33 @@ apply:
 done:
 ```
 
+==== Síntese de not
+
+`not rd, rs1` (pseudo-instrução `xori rd, rs1, -1`) é sintetizada via negação aritmética seguida de decremento:
+
+```asm
+; not rd, rs1  →  ~x = -x - 1
+neg   rd, rs1    # rd = -rs1  (sub rd, x0, rs1)
+addi  rd, rd, -1 # rd = -rs1 - 1 = ~rs1
+```
+
+A identidade algébrica usada é `~x = −x − 1`, válida para inteiros em complemento de dois. O custo é 2 instruções (`sub` + `addi`), contra 1 instrução `xori` nativa.
+
+==== Síntese de xor
+
+`xor rd, rs1, rs2` é sintetizado via identidade de De Morgan: `a ^ b = ~(a & b) & (a | b)`. A negação intermediária é implementada com a síntese de `not` já definida:
+
+```asm
+; xor rd, rs1, rs2
+and   t0, rs1, rs2   # t0 = rs1 & rs2
+or    t1, rs1, rs2   # t1 = rs1 | rs2
+neg   t0, t0         # t0 = -(rs1 & rs2)
+addi  t0, t0, -1     # t0 = ~(rs1 & rs2)
+and   rd, t0, t1     # rd = ~(rs1&rs2) & (rs1|rs2) = rs1 ^ rs2
+```
+
+O custo é 5 instruções. Para `xori rd, rs1, imm`, a constante é absorvida diretamente em `andi`/`ori` pelo compilador, mantendo 5 instruções sem necessidade de `li`.
+
 == Monociclo sem fance e controle - sc2
 Supporta todas as instruções do rv32i instruções de mem. ordering, csr acess e system
 
@@ -1472,6 +1499,64 @@ li    a4,8             # in_mask = 1 << 3
     li    a5,-536870912 # 0xE0000000 = -1 << 29
     or    a0,a0,a5     # extensão de sinal
 .L5:
+```
+
+=== Síntese de not em sc1
+
+Para validar que o target sc1 não emite `not`/`xori` mas usa `neg` + `addi`:
+
+```c
+// test/sc1_not.c
+int f(int x) { return ~x; }
+```
+
+```sh
+rvsc1-unknown-elf-gcc -S -O1 test/sc1_not.c -o sc1_not.s
+
+grep -E '^\s+(not|xori)\b' sc1_not.s && echo FAIL || echo PASS
+```
+
+O assembly gerado usa `neg` (`sub a0,x0,a0`) e `addi` em vez de `xori`:
+
+```asm
+neg   a0, a0     # a0 = -a0
+addi  a0, a0, -1 # a0 = ~a0
+```
+
+=== Síntese de xor em sc1
+
+Para validar que o target sc1 não emite `xor`/`xori` mas usa a síntese via De Morgan:
+
+```c
+// test/sc1_xor.c
+int xor_reg(int a, int b) { return a ^ b; }
+int xor_imm(int a)         { return a ^ 5; }
+```
+
+```sh
+rvsc1-unknown-elf-gcc -S -O1 test/sc1_xor.c -o sc1_xor.s
+
+grep -E '^\s+(xor|xori)\b' sc1_xor.s && echo FAIL || echo PASS
+```
+
+Para `xor_reg`, o assembly gerado usa a sequência `and`/`or`/`neg`/`addi`/`and`:
+
+```asm
+and   a5, a0, a1   # a5 = a & b
+or    a0, a0, a1   # a0 = a | b
+neg   a5, a5       # a5 = -(a & b)
+addi  a5, a5, -1   # a5 = ~(a & b)
+and   a0, a5, a0   # a0 = ~(a&b) & (a|b) = a ^ b
+```
+
+Para `xor_imm` com constante 5, o compilador absorve o imediato diretamente em `andi`/`ori` sem instrução `li` adicional:
+
+```asm
+andi  a5, a0, 5    # a5 = a & 5
+ori   a0, a0, 5    # a0 = a | 5
+neg   a5, a5       # a5 = -(a & 5)
+addi  a5, a5, -1   # a5 = ~(a & 5)
+and   a0, a5, a0   # a0 = ~(a&5) & (a|5) = a ^ 5
 ```
 
 === Ausência de fence em sc2

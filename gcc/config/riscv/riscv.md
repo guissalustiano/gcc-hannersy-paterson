@@ -1739,6 +1739,23 @@
   ""
 
 {
+  /* sc1 synthesis: a ^ b = ~(a & b) & (a | b)  [De Morgan] */
+  if ((<CODE>) == XOR && !TARGET_XOR)
+    {
+      rtx op1     = operands[1];
+      rtx op2     = REG_P (operands[2]) ? operands[2]
+				        : force_reg (SImode, operands[2]);
+      rtx ab_and  = gen_reg_rtx (SImode);
+      rtx ab_ior  = gen_reg_rtx (SImode);
+      rtx neg     = gen_reg_rtx (SImode);
+      rtx not_and = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (ab_and,        op1, op2));
+      emit_insn (gen_iorsi3 (ab_ior,        op1, op2));
+      emit_insn (gen_subsi3 (neg,           const0_rtx, ab_and));
+      emit_insn (gen_addsi3 (not_and,       neg, GEN_INT (-1)));
+      emit_insn (gen_andsi3 (operands[0],   not_and, ab_ior));
+      DONE;
+    }
   /* If synthesis of the logical op is successful, then no further code
      generation is necessary.  Else just generate code normally.  */
   if (CONST_INT_P (operands[2]) && synthesize_ior_xor (<OPTAB>, operands))
@@ -1749,7 +1766,7 @@
   [(set (match_operand:X                0 "register_operand" "=r,r")
 	(any_or:X (match_operand:X 1 "register_operand" "%r,r")
 		       (match_operand:X 2 "arith_operand"    " r,I")))]
-  ""
+  "TARGET_XOR || (<CODE>) == IOR"
   "<insn>%i2\t%0,%1,%2"
   [(set_attr "type" "logical")
    (set_attr "mode" "<MODE>")])
@@ -1763,10 +1780,25 @@
   [(set_attr "type" "logical")
    (set_attr "mode" "SI")])
 
-(define_insn "one_cmpl<mode>2"
+(define_expand "one_cmpl<mode>2"
+  [(set (match_operand:X 0 "register_operand")
+	(not:X (match_operand:X 1 "register_operand")))]
+  ""
+{
+  if (!TARGET_XOR)
+    {
+      /* sc1 synthesis: ~x = -x - 1  (sub x0,rs then addi -1). */
+      rtx tmp = gen_reg_rtx (SImode);
+      emit_insn (gen_subsi3 (tmp, const0_rtx, operands[1]));
+      emit_insn (gen_addsi3 (operands[0], tmp, GEN_INT (-1)));
+      DONE;
+    }
+})
+
+(define_insn "*one_cmpl<mode>2"
   [(set (match_operand:X        0 "register_operand" "=r")
 	(not:X (match_operand:X 1 "register_operand" " r")))]
-  ""
+  "TARGET_XOR"
   "not\t%0,%1"
   [(set_attr "type" "logical")
    (set_attr "mode" "<MODE>")])

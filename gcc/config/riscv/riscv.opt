@@ -432,6 +432,10 @@ mshift
 Target Var(TARGET_SHIFT) Init(1)
 Enable shift instruction emission (-mno-shift synthesizes sll via add; srl/sra unsupported).
 
+mxor
+Target Var(TARGET_XOR) Init(1)
+Enable xor/xori instruction emission (-mno-xor synthesizes not via sub+addi).
+
 mautovec-segment
 Target Integer Var(riscv_mautovec_segment) Init(1)
 Enable (default) or disable generation of vector segment load/store instructions.
