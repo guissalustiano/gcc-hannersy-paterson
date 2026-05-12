@@ -1,0 +1,22 @@
+gcc_src := justfile_directory() + "/../.."
+target  := "rvsc6-unknown-elf"
+prefix  := justfile_directory() + "/install"
+
+default: build install
+
+configure:
+    {{gcc_src}}/configure \
+        --target={{target}} \
+        --prefix={{prefix}} \
+        --enable-languages=c \
+        --with-newlib
+
+build:
+    make all-gcc -j$(nproc)
+
+install:
+    make install-gcc
+
+test:
+    PATH={{prefix}}/bin:$PATH \
+    bash {{gcc_src}}/sc-test/run_tests.sh {{target}}

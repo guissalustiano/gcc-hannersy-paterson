@@ -76,3 +76,7 @@ stamp-*
 # direnv
 .direnv/
 .envrc
+
+# build directory — ignore everything except justfiles
+/build/**
+!/build/**/justfile

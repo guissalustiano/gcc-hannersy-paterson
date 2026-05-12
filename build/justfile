@@ -1,0 +1,27 @@
+targets := "sc1 sc2 sc3 sc4 sc5 sc6 sc7"
+
+default:
+    @just --list
+
+configure-all:
+    #!/usr/bin/env bash
+    for t in {{targets}}; do
+        echo "=== configuring $t ==="
+        just --justfile {{justfile_directory()}}/$t/justfile configure
+    done
+
+build-all:
+    #!/usr/bin/env bash
+    for t in {{targets}}; do
+        echo "=== building $t ==="
+        just --justfile {{justfile_directory()}}/$t/justfile build install
+    done
+
+configure target:
+    just --justfile {{justfile_directory()}}/{{target}}/justfile configure
+
+build target:
+    just --justfile {{justfile_directory()}}/{{target}}/justfile
+
+test target:
+    just --justfile {{justfile_directory()}}/{{target}}/justfile test
