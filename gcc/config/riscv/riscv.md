@@ -2981,6 +2981,32 @@
       emit_move_insn (operands[0], tmp);
       DONE;
     }
+  /* sc1 synthesis: variable sll via count-down loop of add-self. */
+  if ((<CODE>) == ASHIFT && !TARGET_SHIFT)
+    {
+      rtx count = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (count, gen_lowpart (SImode, operands[2]), GEN_INT (31)));
+      rtx rd = gen_reg_rtx (SImode);
+      emit_move_insn (rd, operands[1]);
+
+      rtx sll_done_label = gen_label_rtx ();
+      rtx sll_loop_label = gen_label_rtx ();
+
+      emit_cmp_and_jump_insns (count, const0_rtx, EQ, NULL_RTX,
+			       SImode, 0, sll_done_label,
+			       profile_probability::uninitialized ());
+      emit_label (sll_loop_label);
+      emit_insn (gen_addsi3 (rd, rd, rd));
+      emit_insn (gen_addsi3 (count, count, GEN_INT (-1)));
+      emit_cmp_and_jump_insns (count, const0_rtx, EQ, NULL_RTX,
+			       SImode, 0, sll_done_label,
+			       profile_probability::uninitialized ());
+      emit_jump_insn (gen_jump (sll_loop_label));
+      emit_barrier ();
+      emit_label (sll_done_label);
+      emit_move_insn (operands[0], rd);
+      DONE;
+    }
   /* sc1 synthesis: srl via loop-based bit extraction using and/or/add/beq only. */
   if ((<CODE>) == LSHIFTRT && !TARGET_SHIFT)
     {
@@ -3003,7 +3029,7 @@
       else
 	{
 	  rtx shift_count = gen_reg_rtx (SImode);
-	  emit_insn (gen_andsi3 (shift_count, operands[2], GEN_INT (31)));
+	  emit_insn (gen_andsi3 (shift_count, gen_lowpart (SImode, operands[2]), GEN_INT (31)));
 	  emit_move_insn (in_mask, const1_rtx);
 
 	  rtx sll_done = gen_label_rtx ();
@@ -3045,6 +3071,130 @@
       emit_barrier ();
       emit_label (done_label);
 
+      emit_move_insn (operands[0], result);
+      DONE;
+    }
+  /* sc1 synthesis: sra = srl + sign extension for negative inputs. */
+  if ((<CODE>) == ASHIFTRT && !TARGET_SHIFT)
+    {
+      /* Shift by 0 is identity. */
+      if (CONST_INT_P (operands[2]) && (INTVAL (operands[2]) & 31) == 0)
+	{
+	  emit_move_insn (operands[0], operands[1]);
+	  DONE;
+	}
+
+      rtx rs1      = operands[1];
+      rtx result   = gen_reg_rtx (SImode);
+      rtx out_mask = gen_reg_rtx (SImode);
+      rtx in_mask  = gen_reg_rtx (SImode);
+      rtx tmp      = gen_reg_rtx (SImode);
+      rtx shift_masked = NULL_RTX;
+
+      /* Save sign bit before srl to avoid rd/rs1 aliasing. */
+      rtx sign_bit = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (sign_bit, rs1,
+			     gen_int_mode (0x80000000UL, SImode)));
+
+      /* Inline srl synthesis. */
+      emit_move_insn (result,   const0_rtx);
+      emit_move_insn (out_mask, const1_rtx);
+
+      if (CONST_INT_P (operands[2]))
+	{
+	  HOST_WIDE_INT sh = INTVAL (operands[2]) & 31;
+	  emit_move_insn (in_mask,
+			  gen_int_mode ((unsigned HOST_WIDE_INT)1 << sh, SImode));
+	}
+      else
+	{
+	  shift_masked = gen_reg_rtx (SImode);
+	  emit_insn (gen_andsi3 (shift_masked, gen_lowpart (SImode, operands[2]), GEN_INT (31)));
+	  emit_move_insn (in_mask, const1_rtx);
+
+	  rtx sll_done2 = gen_label_rtx ();
+	  rtx sll_loop2 = gen_label_rtx ();
+	  rtx counter2  = gen_reg_rtx (SImode);
+
+	  emit_cmp_and_jump_insns (shift_masked, const0_rtx, EQ, NULL_RTX,
+				   SImode, 0, sll_done2,
+				   profile_probability::uninitialized ());
+	  emit_move_insn (counter2, shift_masked);
+	  emit_label (sll_loop2);
+	  emit_insn (gen_addsi3 (in_mask, in_mask, in_mask));
+	  emit_insn (gen_addsi3 (counter2, counter2, GEN_INT (-1)));
+	  emit_cmp_and_jump_insns (counter2, const0_rtx, EQ, NULL_RTX,
+				   SImode, 0, sll_done2,
+				   profile_probability::uninitialized ());
+	  emit_jump_insn (gen_jump (sll_loop2));
+	  emit_barrier ();
+	  emit_label (sll_done2);
+	}
+
+      rtx loop2_label = gen_label_rtx ();
+      rtx skip2_label = gen_label_rtx ();
+      rtx srl2_done   = gen_label_rtx ();
+
+      emit_label (loop2_label);
+      emit_cmp_and_jump_insns (in_mask, const0_rtx, EQ, NULL_RTX,
+			       SImode, 0, srl2_done,
+			       profile_probability::uninitialized ());
+      emit_insn (gen_andsi3 (tmp, rs1, in_mask));
+      emit_cmp_and_jump_insns (tmp, const0_rtx, EQ, NULL_RTX,
+			       SImode, 0, skip2_label,
+			       profile_probability::uninitialized ());
+      emit_insn (gen_iorsi3 (result, result, out_mask));
+      emit_label (skip2_label);
+      emit_insn (gen_addsi3 (out_mask, out_mask, out_mask));
+      emit_insn (gen_addsi3 (in_mask,  in_mask,  in_mask));
+      emit_jump_insn (gen_jump (loop2_label));
+      emit_barrier ();
+      emit_label (srl2_done);
+
+      /* If rs1 was non-negative, srl == sra: done. */
+      rtx done2_label = gen_label_rtx ();
+      emit_cmp_and_jump_insns (sign_bit, const0_rtx, EQ, NULL_RTX,
+			       SImode, 0, done2_label,
+			       profile_probability::uninitialized ());
+
+      /* Sign-extend: result |= sign_mask (top sh bits all 1). */
+      if (CONST_INT_P (operands[2]))
+	{
+	  HOST_WIDE_INT sh = INTVAL (operands[2]) & 31;
+	  /* sh is 1..31 here (0 handled above). */
+	  rtx sign_mask =
+	    gen_int_mode (((unsigned HOST_WIDE_INT) -1) << (32 - sh), SImode);
+	  emit_insn (gen_iorsi3 (result, result, sign_mask));
+	}
+      else
+	{
+	  /* shift_masked == 0 → sra(x,0) = x, no sign bits to fill. */
+	  emit_cmp_and_jump_insns (shift_masked, const0_rtx, EQ, NULL_RTX,
+				   SImode, 0, done2_label,
+				   profile_probability::uninitialized ());
+
+	  /* sign_mask = 0xFFFFFFFF << (32 - shift_masked): sll loop. */
+	  rtx n_sll2 = gen_reg_rtx (SImode);
+	  emit_insn (gen_subsi3 (n_sll2, const0_rtx, shift_masked)); /* -shift */
+	  emit_insn (gen_addsi3 (n_sll2, n_sll2, GEN_INT (32)));     /* 32-shift */
+	  rtx sign_mask2 = gen_reg_rtx (SImode);
+	  emit_move_insn (sign_mask2, constm1_rtx);
+
+	  rtx ext2_loop = gen_label_rtx ();
+	  rtx ext2_done = gen_label_rtx ();
+	  emit_label (ext2_loop);
+	  emit_insn (gen_addsi3 (sign_mask2, sign_mask2, sign_mask2));
+	  emit_insn (gen_addsi3 (n_sll2, n_sll2, GEN_INT (-1)));
+	  emit_cmp_and_jump_insns (n_sll2, const0_rtx, EQ, NULL_RTX,
+				   SImode, 0, ext2_done,
+				   profile_probability::uninitialized ());
+	  emit_jump_insn (gen_jump (ext2_loop));
+	  emit_barrier ();
+	  emit_label (ext2_done);
+	  emit_insn (gen_iorsi3 (result, result, sign_mask2));
+	}
+
+      emit_label (done2_label);
       emit_move_insn (operands[0], result);
       DONE;
     }

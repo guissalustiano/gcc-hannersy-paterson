@@ -315,6 +315,81 @@ while (in_mask != 0) {
 
 O custo é (32 − shift) iterações de ~7 instruções. Para `srl` variável, adiciona-se um loop de `shift` iterações para calcular `in_mask = 1 << shift`.
 
+==== Síntese de sll variável
+
+`sll rd, rs1, rs2` com deslocamento variável é sintetizado via laço de decremento: o valor é dobrado (`add rd, rd, rd`) exatamente `rs2 & 31` vezes.
+
+```c
+uint32_t sll(uint32_t rs1, uint32_t rs2) {
+    uint32_t rd = rs1;
+    for (uint32_t i = rs2 & 31; i != 0; i--)
+        rd += rd;
+    return rd;
+}
+```
+
+```asm
+# rd = rs1 << rs2
+    andi  count, rs2, 31    # count = rs2 & 31
+    mv    rd, rs1
+    beq   count, x0, done
+loop:
+    add   rd, rd, rd        # rd <<= 1
+    addi  count, count, -1
+    beq   count, x0, done
+    beq   x0, x0, loop
+done:
+```
+
+O custo é até 31 iterações de ~5 instruções para shift máximo de 31 bits.
+
+==== Síntese de sra
+
+`sra rd, rs1, rs2` preserva o bit de sinal. A síntese executa primeiro `srl` e depois, se o bit 31 de `rs1` era 1, aplica extensão de sinal via OR de `sign_mask = 0xFFFFFFFF << (32 − shift)`.
+
+```c
+int32_t sra(int32_t rs1, uint32_t rs2) {
+    uint32_t shift = rs2 & 31;
+    uint32_t result = (uint32_t)srl((uint32_t)rs1, shift);
+    if (shift == 0 || (rs1 >> 31) == 0) return result;
+    uint32_t sign_mask = (uint32_t)(-1) << (32u - shift);
+    return result | sign_mask;
+}
+```
+
+Para deslocamento constante `n`, `sign_mask` é calculado em tempo de compilação:
+
+```asm
+; srai rd, rs1, 3  →  sign_mask = -1 << 29 = 0xE0000000
+    and   t6, rs1, 0x80000000   # salva bit de sinal
+    [srl  rd, rs1, 3]           # deslocamento lógico (síntese)
+    beq   t6, x0, done          # positivo: srl == sra
+    ori   rd, rd, 0xE0000000    # OR sign_mask
+done:
+```
+
+Para deslocamento variável, `sign_mask` é construído em tempo de execução via laço de deslocamento à esquerda de `-1`:
+
+```asm
+# sra rd, rs1, rs2
+    and   t6, rs1, 0x80000000   # bit de sinal (antes do srl)
+    [srl  rd, rs1, rs2]         # deslocamento lógico (síntese)
+    beq   t6, x0, done          # positivo: srl == sra
+    andi  shift, rs2, 31
+    beq   shift, x0, done       # shift==0 mod 32: sem extensão
+    neg   n, shift
+    addi  n, n, 32              # n = 32 - shift
+    li    sign_mask, -1         # 0xFFFFFFFF
+ext_sll:
+    add   sign_mask, sign_mask, sign_mask
+    addi  n, n, -1
+    beq   n, x0, apply
+    beq   x0, x0, ext_sll
+apply:
+    or    rd, rd, sign_mask
+done:
+```
+
 == Monociclo sem fance e controle - sc2
 Supporta todas as instruções do rv32i instruções de mem. ordering, csr acess e system
 
@@ -1329,6 +1404,74 @@ or   a0,a0,a3
 add  a3,a3,a3
 add  a5,a5,a5
 ...
+```
+
+=== Síntese de sll variável em sc1
+
+Para validar que o target sc1 não emite `sll` para deslocamentos com operando variável:
+
+```c
+// test/sc1_sll_var.c
+int sll_var(int x, int n) { return x << n; }
+```
+
+```sh
+rvsc1-unknown-elf-gcc -S -O1 test/sc1_sll_var.c -o sc1_sll_var.s
+
+grep -E '^\s+sll' sc1_sll_var.s && echo FAIL || echo PASS
+```
+
+O assembly gerado usa `andi`+`add`+`beq` em vez de `sll`:
+
+```asm
+andi  a1,a1,31
+beq   a1,zero,.Ldone
+.Lloop:
+    add   a0,a0,a0
+    addi  a1,a1,-1
+    beq   a1,zero,.Ldone
+    ...
+.Ldone:
+```
+
+=== Síntese de sra em sc1
+
+Para validar que o target sc1 não emite `sra`/`srai` mas usa `srl` seguido de extensão de sinal:
+
+```c
+// test/sc1_sra.c
+int sra3(int x) { return x >> 3; }         // constante
+int sra_var(int x, int n) { return x >> n; } // variável
+```
+
+```sh
+rvsc1-unknown-elf-gcc -S -O1 test/sc1_sra.c -o sc1_sra.s
+
+grep -E '^\s+sra' sc1_sra.s && echo FAIL || echo PASS
+```
+
+Para `sra3`, o assembly gerado usa a síntese de `srl` seguida de OR com a constante `0xE0000000` (`-1 << 29`):
+
+```asm
+li    a4,-2147483648   # 0x80000000: máscara do bit de sinal
+and   a3,a0,a4         # a3 = bit de sinal
+li    a0,0             # result = 0
+li    a2,1             # out_mask = 1
+li    a4,8             # in_mask = 1 << 3
+.L2:                   # loop srl
+    beq   a4,zero,.L4
+    and   a1,a5,a4
+    beq   a1,zero,.L3
+    or    a0,a0,a2
+.L3:
+    add   a2,a2,a2
+    add   a4,a4,a4
+    ...
+.L4:
+    beq   a3,zero,.L5  # positivo: srl == sra
+    li    a5,-536870912 # 0xE0000000 = -1 << 29
+    or    a0,a0,a5     # extensão de sinal
+.L5:
 ```
 
 === Ausência de fence em sc2
