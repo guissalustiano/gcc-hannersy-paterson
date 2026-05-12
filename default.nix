@@ -33,6 +33,9 @@ pkgs.mkShell {
     zlib
     zlib.dev
 
+    # Build runner
+    just
+
     # Document
     typst
   ];
