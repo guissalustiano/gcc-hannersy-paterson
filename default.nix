@@ -2,6 +2,7 @@
 
 pkgs.mkShell {
   name = "gcc-rvsc";
+  hardeningDisable = [ "format" ];
 
   nativeBuildInputs = with pkgs; [
     # Build tools
