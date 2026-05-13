@@ -1,0 +1,114 @@
+# sc5: rv64im — rv64i + integer multiply/divide
+
+# arithmetic (64-bit)
+add
+addi
+sub
+neg
+addw
+addiw
+subw
+negw
+
+# multiply / divide (M extension)
+mul
+mulh
+mulhu
+mulhsu
+div
+divu
+rem
+remu
+# word variants
+mulw
+divw
+divuw
+remw
+remuw
+
+# logic
+and
+andi
+or
+ori
+xor
+xori
+not
+
+# shifts (64-bit)
+sll
+slli
+srl
+srli
+sra
+srai
+sllw
+slliw
+srlw
+srliw
+sraw
+sraiw
+
+# load / store
+lw
+sw
+lh
+lhu
+lb
+lbu
+sh
+sb
+ld
+sd
+lwu
+
+# upper immediate / PC-relative
+lui
+auipc
+
+# jump / call
+jal
+jalr
+jr
+ret
+call
+tail
+
+# branches
+beq
+bne
+blt
+bge
+bltu
+bgeu
+beqz
+bnez
+bltz
+bgez
+blez
+bgtz
+ble
+bgt
+bleu
+bgtu
+
+# comparison / set
+slt
+slti
+sltu
+sltiu
+seqz
+snez
+sltz
+sgtz
+
+# pseudo load / move
+li
+mv
+la
+
+# memory ordering
+fence
+
+# NOP
+nop

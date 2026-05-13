@@ -25,3 +25,14 @@ build target:
 
 test target:
     just --justfile {{justfile_directory()}}/{{target}}/justfile test
+
+test-all:
+    #!/usr/bin/env bash
+    failed=()
+    for t in {{targets}}; do
+        echo "=== testing $t ==="
+        if ! just --justfile {{justfile_directory()}}/$t/justfile test; then
+            failed+=("$t")
+        fi
+    done
+    [[ ${#failed[@]} -eq 0 ]] || { echo "Failed: ${failed[*]}"; exit 1; }

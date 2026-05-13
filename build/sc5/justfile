@@ -19,4 +19,4 @@ install:
 
 test:
     PATH={{prefix}}/bin:$PATH \
-    bash {{gcc_src}}/sc-test/run_tests.sh {{target}}
+    python3 {{gcc_src}}/sc-test/run_tests.py {{target}} {{justfile_directory()}}/instructions.txt

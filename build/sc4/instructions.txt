@@ -1,0 +1,101 @@
+# sc4: rv64i — 64-bit; int ops use *w variants, adds ld/sd/lwu
+
+# arithmetic (64-bit)
+add
+addi
+sub
+neg
+# word (32-bit result, sign-extended to 64)
+addw
+addiw
+subw
+negw
+
+# logic
+and
+andi
+or
+ori
+xor
+xori
+not
+
+# shifts (64-bit)
+sll
+slli
+srl
+srli
+sra
+srai
+# word shifts (int operations)
+sllw
+slliw
+srlw
+srliw
+sraw
+sraiw
+
+# load / store
+lw
+sw
+lh
+lhu
+lb
+lbu
+sh
+sb
+# 64-bit
+ld
+sd
+lwu
+
+# upper immediate / PC-relative
+lui
+auipc
+
+# jump / call
+jal
+jalr
+jr
+ret
+call
+tail
+
+# branches
+beq
+bne
+blt
+bge
+bltu
+bgeu
+beqz
+bnez
+bltz
+bgez
+blez
+bgtz
+ble
+bgt
+bleu
+bgtu
+
+# comparison / set
+slt
+slti
+sltu
+sltiu
+seqz
+snez
+sltz
+sgtz
+
+# pseudo load / move
+li
+mv
+la
+
+# memory ordering
+fence
+
+# NOP
+nop
