@@ -1,6 +1,6 @@
 gcc_src   := justfile_directory() + "/../.."
 build_dir := justfile_directory() + "/build"
-prefix    := justfile_directory() + "/install"
+prefix    := justfile_directory() + "/build/install"
 
 default: build install
 
