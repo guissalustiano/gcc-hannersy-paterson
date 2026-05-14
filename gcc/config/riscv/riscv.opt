@@ -444,6 +444,10 @@ mandi
 Target Var(TARGET_ANDI) Init(1)
 Enable andi instruction emission (-mno-andi loads immediate into register before and).
 
+mbne
+Target Var(TARGET_BNE) Init(1)
+Enable bne instruction emission (-mno-bne synthesizes via beq+lui+addi+jr).
+
 mautovec-segment
 Target Integer Var(riscv_mautovec_segment) Init(1)
 Enable (default) or disable generation of vector segment load/store instructions.

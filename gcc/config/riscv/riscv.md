@@ -3681,7 +3681,7 @@
 	 (pc)))]
   "!TARGET_XCVBI"
 {
-  if (!TARGET_AUIPC && GET_CODE (operands[1]) == NE)
+  if (!TARGET_BNE && GET_CODE (operands[1]) == NE)
     return "beq\t%2,%z3,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
 
   if (get_attr_length (insn) == 12)

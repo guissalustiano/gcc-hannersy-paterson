@@ -124,11 +124,12 @@ Custom boolean flags added for this project:
 | Flag | Variable | Effect when 0 |
 |------|----------|----------------|
 | `-mfence` | `TARGET_FENCE` | `fence`/`fence.i` expands are no-ops |
-| `-mauipc` | `TARGET_AUIPC` | PC-relative → absolute `lui+lo12`; calls → `lui+jalr`; `bne` → `beq+skip+lui+jr` |
+| `-mauipc` | `TARGET_AUIPC` | PC-relative → absolute `lui+lo12`; calls → `lui+jalr` |
 | `-mshift` | `TARGET_SHIFT` | native `sll`/`srl`/`sra` gated off; synthesis in expand |
 | `-mxor` | `TARGET_XOR` | `xor` → De Morgan; `not`/`xori rd,rs,-1` → `sub+addi` |
 | `-mori` | `TARGET_ORI` | `ori` → `li t, imm; or` |
 | `-mandi` | `TARGET_ANDI` | `andi` → `li t, imm; and`; zero-extend byte handled by special split |
+| `-mbne` | `TARGET_BNE` | `bne` → `beq+skip+lui+addi+jr` |
 
 All have `Init(1)` (enabled by default); the `rvscN.h` header disables the appropriate flags via `CC1_SPEC`.
 

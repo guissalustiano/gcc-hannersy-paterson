@@ -243,7 +243,7 @@ Dado a não existência de instruções que interajam com o PC, essa implementa�
 
 Target: `rvsc1`
 
-Flags equivalentes: `-march=rv32i -mabi=ilp32 -mno-fence -mno-auipc -mno-shift -mno-xor -mno-ori -mno-andi`
+Flags equivalentes: `-march=rv32i -mabi=ilp32 -mno-fence -mno-auipc -mno-shift -mno-xor -mno-ori -mno-andi -mno-bne`
 
 Suporta todas as instruções do sc0 mais as instruções mínimas para suporte a funções em C:
 
