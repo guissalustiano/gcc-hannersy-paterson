@@ -32,5 +32,11 @@ ble     # bge rs2, rs1, offset  (loop bounds check)
 li      # lui+addi or addi x0,imm
 mv      # addi rd, rs, 0
 
+# comparison
+# TODO: remove slt/sltu once blt/bge/bltu/bgeu synthesis no longer relies on
+# these instructions (i.e., after a native slt-free synthesis is implemented).
+slt     # signed less-than (used in blt/bge synthesis)
+sltu    # unsigned less-than (used in bltu/bgeu synthesis)
+
 # comparison pseudo
 snez    # sltu rd, x0, rs

@@ -448,6 +448,22 @@ mbne
 Target Var(TARGET_BNE) Init(1)
 Enable bne instruction emission (-mno-bne synthesizes via beq+lui+addi+jr).
 
+mblt
+Target Var(TARGET_BLT) Init(1)
+Enable blt instruction emission (-mno-blt synthesizes via slt+beq+jump).
+
+mbge
+Target Var(TARGET_BGE) Init(1)
+Enable bge instruction emission (-mno-bge synthesizes via slt+beq).
+
+mbltu
+Target Var(TARGET_BLTU) Init(1)
+Enable bltu instruction emission (-mno-bltu synthesizes via sltu+beq+jump).
+
+mbgeu
+Target Var(TARGET_BGEU) Init(1)
+Enable bgeu instruction emission (-mno-bgeu synthesizes via sltu+beq).
+
 mautovec-segment
 Target Integer Var(riscv_mautovec_segment) Init(1)
 Enable (default) or disable generation of vector segment load/store instructions.

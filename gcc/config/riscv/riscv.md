@@ -3684,6 +3684,18 @@
   if (!TARGET_BNE && GET_CODE (operands[1]) == NE)
     return "beq\t%2,%z3,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
 
+  if (!TARGET_BGE && GET_CODE (operands[1]) == GE)
+    return "slt\tt1,%2,%z3\n\tbeq\tt1,zero,%l0";
+
+  if (!TARGET_BLT && GET_CODE (operands[1]) == LT)
+    return "slt\tt1,%2,%z3\n\tbeq\tt1,zero,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
+
+  if (!TARGET_BGEU && GET_CODE (operands[1]) == GEU)
+    return "sltu\tt1,%2,%z3\n\tbeq\tt1,zero,%l0";
+
+  if (!TARGET_BLTU && GET_CODE (operands[1]) == LTU)
+    return "sltu\tt1,%2,%z3\n\tbeq\tt1,zero,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
+
   if (get_attr_length (insn) == 12)
     return "b%r1\t%2,%z3,1f; jump\t%l0,ra; 1:";
 
