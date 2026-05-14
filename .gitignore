@@ -79,3 +79,4 @@ stamp-*
 
 # scw build directories — ignore compiled artifacts, keep justfiles/instructions/tests
 /scw/sc*/build/
+/scw/sc*/install/
