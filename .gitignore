@@ -77,8 +77,5 @@ stamp-*
 .direnv/
 .envrc
 
-# build directory — ignore everything except justfiles and test specs
-/build/**
-!/build/*/
-!/build/**/justfile
-!/build/**/instructions.txt
+# scw build directories — ignore compiled artifacts, keep justfiles/instructions/tests
+/scw/sc*/build/
