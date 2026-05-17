@@ -243,7 +243,7 @@ Dado a não existência de instruções que interajam com o PC, essa implementa�
 
 Target: `rvsc1`
 
-Flags equivalentes: `-march=rv32i -mabi=ilp32 -mno-fence -mno-auipc -mno-shift -mno-xor -mno-ori -mno-andi -mno-bne`
+Flags equivalentes: `-march=rv32i -mabi=ilp32 -mno-fence -mno-auipc -mno-shift -mno-xor -mno-ori -mno-andi -mno-bne -mno-blt -mno-bge -mno-bltu -mno-bgeu -mno-byte -mno-half`
 
 Suporta todas as instruções do sc0 mais as instruções mínimas para suporte a funções em C:
 
@@ -269,6 +269,8 @@ Não implementa `auipc` nem `jal`: o processador não tem acesso ao PC para arit
 - Chamadas de função são feitas via `lui`+`jalr` (endereço absoluto) em vez do pseudo `call` (que gera `auipc`+`jalr`, relaxado pelo linker para `jal`).
 - Desvios incondicionais dentro de funções (laços, `if`/`else`) são sintetizados via `lui`+`jalr` em vez de `j label` (`jal x0, label`).
 - Referências a símbolos globais usam `lui`+`lo12` em vez de `auipc`+`lo12`.
+
+Não implementa cargas de byte ou meia-palavra (`lb`, `lbu`, `lh`, `lhu`): o hardware apenas suporta `lw` (word). O compilador sintetiza todas as quatro instruções via `lw` + alinhamento + extração de bits (ver @sc1-lb-synthesis).
 
 ==== Risco: registrador temporário nos saltos absolutos
 
@@ -1005,101 +1007,50 @@ This requires that `pool_entry` fits in a 12-bit signed offset from `x0` (addres
   [lw from pool], [1], [1],
 )
 
-==== LB
+==== LB, LBU, LH, LHU <sc1-lb-synthesis>
 
-Since the processor only provides word-level memory access (`lw`), a byte load is emulated in three steps: load the containing word, shift the target byte to bit 31, then arithmetic-right-shift by 24 to sign-extend it into the full register.
-
-Because `offset` is a compile-time constant, `byte_pos = offset & 3` (0, 1, 2, or 3) is also known at compile time, so all shift amounts are constants.
+Como o processador suporta apenas `lw`, toda carga de byte ou meia-palavra é sintetizada em quatro etapas: alinhar o endereço à word, carregar a word, extrair a unidade alvo por deslocamento lógico à direita, e finalmente estender por sinal (`sra`) ou por zero (`srl`). Esse algoritmo é emitido em tempo de execução — não pressupõe que o offset seja constante em tempo de compilação.
 
 ```c
-int32_t lb(uint32_t base, int32_t offset) {
-    uint32_t addr          = base + offset;
-    uint32_t aligned_addr  = addr & ~3u;           // round down to word boundary
-    uint32_t word          = *(uint32_t *)aligned_addr;     // lw
-    uint32_t byte_pos      = addr & 3u;            // 0‥3: which byte within word
-    uint32_t left_shift    = (3u - byte_pos) * 8u; // bits to move target byte → bit 31
-    uint32_t raised        = word << left_shift;   // sll: target byte now at [31:24]
-    int32_t  result        = (int32_t)raised >> 24; // sra: sign-extend back to [7:0]
-    return result;
-}
+/* Algoritmo comum a lb/lbu/lh/lhu */
+uint32_t aligned = addr & ~3u;          // word alinhada: addr & -4
+uint32_t word    = lw(aligned);         // lw 0(aligned)
+uint32_t unit_off = addr & MASK;        // MASK = 3 para byte, 2 para meia-palavra
+uint32_t bit_off  = unit_off * 8;       // posição do bit menos significativo
+uint32_t shifted  = word >> bit_off;    // [srl] extrai a unidade para bits [N:0]
+// lbu/lhu: zero-extend via deslocamento simétrico
+uint32_t result   = (shifted << BITS) >> BITS;  // lógico: [srl]
+// lb/lh:  sign-extend via deslocamento aritmético
+int32_t  result   = (int32_t)(shifted << BITS) >> BITS;  // aritmético: [sra]
+// BITS = 24 para byte (QImode), 16 para meia-palavra (HImode)
 ```
 
 ```asm
-# lb rd, offset(rs1)   (byte_pos = offset & 3, compile-time constant: 0–3)
-lw    t0, (offset & ~3)(rs1)        # load containing word
-[sll  t0, t0, (3 - byte_pos) * 8]  # move target byte to bits [31:24]
-[sra  rd,  t0, 24]                  # arithmetic right-shift → sign-extends byte
+# lb rd, 0(rs1)  (endereço em rs1, byte_pos desconhecido em compile-time)
+addi  t0, x0, -4
+and   t0, rs1, t0         # t0 = rs1 & -4  (word alinhada)
+lw    t1, 0(t0)           # t1 = word contendo o byte
+addi  t0, x0, 3
+and   t0, rs1, t0         # t0 = rs1 & 3  (posição do byte: 0–3)
+[sll  t0, t0, 3]          # t0 = byte_pos * 8  (deslocamento em bits)
+[srl  t1, t1, t0]         # t1 >>= bit_off  (byte em bits [7:0])
+[sll  t1, t1, 24]         # t1 <<= 24  (byte em bits [31:24])
+[sra  rd,  t1, 24]        # rd >>= 24  (extensão por sinal → lb)
+                          # use [srl] no último passo para lbu (extensão por zero)
+
+# lh rd, 0(rs1)  — idêntico mas MASK = 2, BITS = 16
+addi  t0, x0, -4
+and   t0, rs1, t0         # word alinhada
+lw    t1, 0(t0)
+addi  t0, x0, 2
+and   t0, rs1, t0         # t0 = rs1 & 2  (0 ou 2: qual meia-palavra)
+[sll  t0, t0, 3]          # t0 = half_pos * 8  (0 ou 16)
+[srl  t1, t1, t0]         # meia-palavra em bits [15:0]
+[sll  t1, t1, 16]
+[sra  rd,  t1, 16]        # extensão por sinal → lh  (srl para lhu)
 ```
 
-==== LBU
-
-Identical to LB but uses a logical (unsigned) right-shift to zero-extend instead of sign-extend.
-
-```c
-uint32_t lbu(uint32_t base, int32_t offset) {
-    uint32_t addr          = base + offset;
-    uint32_t aligned_addr  = addr & ~3u;
-    uint32_t word          = *(uint32_t *)aligned_addr;      // lw
-    uint32_t byte_pos      = addr & 3u;
-    uint32_t left_shift    = (3u - byte_pos) * 8u;
-    uint32_t raised        = word << left_shift;             // sll: target byte → [31:24]
-    uint32_t result        = raised >> 24u;                  // srl: zero-extend to [7:0]
-    return result;
-}
-```
-
-```asm
-# lbu rd, offset(rs1)   (byte_pos = offset & 3, compile-time constant: 0–3)
-lw    t0, (offset & ~3)(rs1)        # load containing word
-[sll  t0, t0, (3 - byte_pos) * 8]  # move target byte to bits [31:24]
-[srl  rd,  t0, 24]                  # logical right-shift → zero-extends byte
-```
-
-==== LH
-
-Halfwords are 2-byte aligned, so `hw_pos = (offset >> 1) & 1` is 0 or 1 (compile-time constant). Shifting the target halfword to bits [31:16] and then arithmetic-right-shifting by 16 produces a sign-extended result in one unified sequence.
-
-```c
-int32_t lh(uint32_t base, int32_t offset) {
-    uint32_t addr          = base + offset;
-    uint32_t aligned_addr  = addr & ~3u;
-    uint32_t word          = *(uint32_t *)aligned_addr;      // lw
-    uint32_t hw_pos        = (addr >> 1u) & 1u;  // 0 or 1: which halfword within word
-    uint32_t left_shift    = (1u - hw_pos) * 16u; // bits to move target halfword → bit 31
-    uint32_t raised        = word << left_shift;             // sll: target hw → [31:16]
-    int32_t  result        = (int32_t)raised >> 16;          // sra: sign-extend to [15:0]
-    return result;
-}
-```
-
-```asm
-# lh rd, offset(rs1)   (hw_pos = (offset >> 1) & 1, compile-time constant: 0 or 1)
-lw    t0, (offset & ~3)(rs1)        # load containing word
-[sll  t0, t0, (1 - hw_pos) * 16]   # move target halfword to bits [31:16]
-[sra  rd,  t0, 16]                  # arithmetic right-shift → sign-extends halfword
-```
-
-==== LHU
-
-```c
-uint32_t lhu(uint32_t base, int32_t offset) {
-    uint32_t addr          = base + offset;
-    uint32_t aligned_addr  = addr & ~3u;
-    uint32_t word          = *(uint32_t *)aligned_addr;      // lw
-    uint32_t hw_pos        = (addr >> 1u) & 1u;
-    uint32_t left_shift    = (1u - hw_pos) * 16u;
-    uint32_t raised        = word << left_shift;             // sll: target hw → [31:16]
-    uint32_t result        = raised >> 16u;                  // srl: zero-extend to [15:0]
-    return result;
-}
-```
-
-```asm
-# lhu rd, offset(rs1)   (hw_pos = (offset >> 1) & 1, compile-time constant: 0 or 1)
-lw    t0, (offset & ~3)(rs1)        # load containing word
-[sll  t0, t0, (1 - hw_pos) * 16]   # move target halfword to bits [31:16]
-[srl  rd,  t0, 16]                  # logical right-shift → zero-extends halfword
-```
+Como os shifts em sc1 são sintetizados via laços de `add`/`beq`, o custo total de uma carga de byte chega a ~70–80 instruções. O custo elevado é intencional: evidencia para os alunos o valor de ter `lb`/`lbu` como instruções nativas.
 
 === Store
 
@@ -1646,6 +1597,48 @@ or    a0, a0, a5   # a0 = a | 5
 ; or_reg
 or    a0, a0, a1   # a0 = a | b  (inalterado)
 ```
+
+=== Síntese de lb/lbu/lh/lhu em sc1
+
+Para validar que o target sc1 não emite `lb`, `lbu`, `lh` ou `lhu` — instruções não implementadas no hardware — quatro testes verificam que cada carga de byte ou meia-palavra é substituída por uma sequência baseada em `lw`:
+
+```c
+// test/sc1_lbu.c
+int test_lbu(unsigned char *p) { return *p; }
+
+// test/sc1_lb.c
+int test_lb(char *p) { return *p; }
+
+// test/sc1_lhu.c
+int test_lhu(unsigned short *p) { return *p; }
+
+// test/sc1_lh.c
+int test_lh(short *p) { return *p; }
+```
+
+```sh
+for insn in lbu lb lhu lh; do
+  rvsc1-unknown-elf-gcc -S -O1 test/sc1_${insn}.c -o - \
+    | grep -E "^\s+${insn}\b" && echo FAIL || echo PASS
+done
+```
+
+O assembly gerado para `test_lbu` começa com o alinhamento do endereço e a carga da word:
+
+```asm
+li    a5, -4
+and   a5, a0, a5          # a5 = addr & -4  (word alinhada)
+lw    a1, 0(a5)           # a1 = word contendo o byte
+li    a5, 3
+and   a0, a0, a5          # a0 = addr & 3  (posição do byte)
+add   a0, a0, a0          # \
+add   a0, a0, a0          #  sll a0, a0, 3  (posição em bits)
+add   a0, a0, a0          # /
+# ... srl loop (extrai byte) ...
+# ... sll/srl 24 (zero-extends byte) ...
+```
+
+Nenhum dos quatro casos emite as instruções proibidas; todos passam nos testes de síntese.
 
 === Ausência de fence em sc2
 

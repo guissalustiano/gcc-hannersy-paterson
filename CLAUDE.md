@@ -24,7 +24,7 @@ Eight progressive RISC-V GCC target triples model the Hennessy-Patterson educati
 | Target | Triple | ISA | Notes |
 |--------|--------|-----|-------|
 | sc0 | `rvsc0-unknown-elf` | rv32i subset: `lw sw beq add addi sub and or` | no `jalr`, `lui`, `auipc` |
-| sc1 | `rvsc1-unknown-elf` | sc0 + `jalr lui` | no `auipc`/`fence`/shifts/xor/ori/andi; all synthesized |
+| sc1 | `rvsc1-unknown-elf` | sc0 + `jalr lui` | no `auipc`/`fence`/shifts/xor/ori/andi/branches/byte+half loads; all synthesized |
 | sc2 | `rvsc2-unknown-elf` | rv32i − `fence` | full control flow |
 | sc3 | `rvsc3-unknown-elf` | rv32i | first target with `fence` |
 | sc4 | `rvsc4-unknown-elf` | rv64i | 64-bit |
@@ -112,6 +112,9 @@ The core of all instruction synthesis. Key patterns:
   - `XOR` (sc1): De Morgan — `~(a & b) & (a | b)`.
   - `IOR` immediate (sc1): `li t, imm; or rd, rs, t`.
   - `AND` immediate (sc1): `li t, imm; and rd, rs, t`.
+- **`zero_extendhi<GPR:mode>2` expand** — when `!TARGET_HALF && MEM_P`: synthesizes `lhu` as `addr&-4 → lw word → (addr&2)<<3 → lshr → (<<16)>>16` (logical).
+- **`zero_extendqi<SUPERQI:mode>2` expand** — when `!TARGET_BYTE && MEM_P`: synthesizes `lbu` identically but using byte mask `addr&3` and shift of 24.
+- **`extend<SHORT:mode><SUPERQI:mode>2` expand** — when `!TARGET_BYTE` (QI) or `!TARGET_HALF` (HI) and MEM_P: synthesizes `lb`/`lh` like the unsigned forms but uses `ashr` for sign extension.
 - **`define_insn_and_split "*zero_extendqisi2_noandi"`** — handles `andi rd, rs, 0xff` when `!TARGET_ANDI`; splits after reload as `li rd, 255; and rd, rs, rd` with early-clobber to ensure `rd ≠ rs`.
 - **`define_insn "*branch<mode>"`** — bne synthesis: `beq a,b,skip; lui t1,%hi(L); addi t1,t1,%lo(L); jr t1; skip:`.
 - **`define_insn "jump"`** — unconditional jump synthesis when `!TARGET_AUIPC`: `lui t1,%hi(L); addi t1,t1,%lo(L); jr t1` (needed for back-edges in synthesized loops).
@@ -130,6 +133,12 @@ Custom boolean flags added for this project:
 | `-mori` | `TARGET_ORI` | `ori` → `li t, imm; or` |
 | `-mandi` | `TARGET_ANDI` | `andi` → `li t, imm; and`; zero-extend byte handled by special split |
 | `-mbne` | `TARGET_BNE` | `bne` → `beq+skip+lui+addi+jr` |
+| `-mblt` | `TARGET_BLT` | `blt` → `slt+beq+jump` |
+| `-mbge` | `TARGET_BGE` | `bge` → `slt+beq` |
+| `-mbltu` | `TARGET_BLTU` | `bltu` → `sltu+beq+jump` |
+| `-mbgeu` | `TARGET_BGEU` | `bgeu` → `sltu+beq` |
+| `-mbyte` | `TARGET_BYTE` | `lb`/`lbu` → `lw`+align+extract; `-mno-byte` synthesizes via `lw`+shift |
+| `-mhalf` | `TARGET_HALF` | `lh`/`lhu` → `lw`+align+extract; `-mno-half` synthesizes via `lw`+shift |
 
 All have `Init(1)` (enabled by default); the `rvscN.h` header disables the appropriate flags via `CC1_SPEC`.
 
@@ -180,3 +189,8 @@ All have `Init(1)` (enabled by default); the `rvscN.h` header disables the appro
 | Define a label target | `rtx lbl = gen_label_rtx (); ... emit_label (lbl)` |
 | Allocate a temp reg | `rtx t = gen_reg_rtx (SImode)` |
 | Force QI operand to SI | `gen_lowpart (SImode, operands[2])` (needed for shift count) |
+| Logical right shift | `emit_insn (gen_lshrsi3 (rd, rs, cnt))` |
+| Arithmetic right shift | `emit_insn (gen_ashrsi3 (rd, rs, cnt))` |
+| Left shift | `emit_insn (gen_ashlsi3 (rd, rs, cnt))` |
+| Load from pointer in reg | `emit_move_insn (dst, gen_rtx_MEM (SImode, ptr_reg))` |
+| Get address from MEM | `XEXP (operands[1], 0)` — raw address RTL (pass to `force_reg`) |
