@@ -37,6 +37,10 @@ pkgs.mkShell {
     # Build runner
     just
 
+    # Binary analysis: assemble + disassemble for binary instruction check
+    pkgsCross.riscv32-embedded.buildPackages.binutils  # riscv32-none-elf-as/objdump
+    pkgsCross.riscv64-embedded.buildPackages.binutils  # riscv64-none-elf-as/objdump
+
     # Document
     typst
     liberation_ttf
