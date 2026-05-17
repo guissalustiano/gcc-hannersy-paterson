@@ -24,7 +24,7 @@ Eight progressive RISC-V GCC target triples model the Hennessy-Patterson educati
 | Target | Triple | ISA | Notes |
 |--------|--------|-----|-------|
 | sc0 | `rvsc0-unknown-elf` | rv32i subset: `lw sw beq add addi sub and or` | no `jalr`, `lui`, `auipc` |
-| sc1 | `rvsc1-unknown-elf` | sc0 + `jalr lui` | no `auipc`/`fence`/shifts/xor/ori/andi/branches/byte+half loads; all synthesized |
+| sc1 | `rvsc1-unknown-elf` | sc0 + `jalr lui` | no `auipc`/`fence`/shifts/xor/ori/andi/branches/byte+half loads+stores; all synthesized |
 | sc2 | `rvsc2-unknown-elf` | rv32i − `fence` | full control flow |
 | sc3 | `rvsc3-unknown-elf` | rv32i | first target with `fence` |
 | sc4 | `rvsc4-unknown-elf` | rv64i | 64-bit |
@@ -115,6 +115,9 @@ The core of all instruction synthesis. Key patterns:
 - **`zero_extendhi<GPR:mode>2` expand** — when `!TARGET_HALF && MEM_P`: synthesizes `lhu` as `addr&-4 → lw word → (addr&2)<<3 → lshr → (<<16)>>16` (logical).
 - **`zero_extendqi<SUPERQI:mode>2` expand** — when `!TARGET_BYTE && MEM_P`: synthesizes `lbu` identically but using byte mask `addr&3` and shift of 24.
 - **`extend<SHORT:mode><SUPERQI:mode>2` expand** — when `!TARGET_BYTE` (QI) or `!TARGET_HALF` (HI) and MEM_P: synthesizes `lb`/`lh` like the unsigned forms but uses `ashr` for sign extension.
+- **`movhi` expand** — when `!TARGET_HALF && MEM_P(operands[0])`: synthesizes `sh` as read-modify-write: `addr&-4 → lw word → (addr&2)<<3 → mask 0xFFFF<<bit_off → word &= ~mask → val&0xFFFF<<bit_off → word |= val → sw`. Uses `gen_lowpart(SImode, force_reg(HImode, src))` for the value; the resulting paradoxical subreg is handled by the `*zero_extendhi<GPR:mode>2` split.
+- **`movqi` expand** — when `!TARGET_BYTE && MEM_P(operands[0])`: synthesizes `sb` identically but using byte mask `addr&3` and mask `0xFF`.
+- **`define_insn_and_split "*zero_extendhi<GPR:mode>2"`** — split body (post-reload) branches on `TARGET_SHIFT`: if set, uses the original `ashift+lshiftrt` by 16; if not (sc1), loads 0xFFFF into `operands[0]` and emits `and op0, src_SI, op0`. Uses `gen_rtx_REG(<GPR:MODE>mode, REGNO(operands[1]))` to access the physical register without creating a new pseudo (which is forbidden post-reload).
 - **`define_insn_and_split "*zero_extendqisi2_noandi"`** — handles `andi rd, rs, 0xff` when `!TARGET_ANDI`; splits after reload as `li rd, 255; and rd, rs, rd` with early-clobber to ensure `rd ≠ rs`.
 - **`define_insn "*branch<mode>"`** — bne synthesis: `beq a,b,skip; lui t1,%hi(L); addi t1,t1,%lo(L); jr t1; skip:`.
 - **`define_insn "jump"`** — unconditional jump synthesis when `!TARGET_AUIPC`: `lui t1,%hi(L); addi t1,t1,%lo(L); jr t1` (needed for back-edges in synthesized loops).
@@ -137,8 +140,8 @@ Custom boolean flags added for this project:
 | `-mbge` | `TARGET_BGE` | `bge` → `slt+beq` |
 | `-mbltu` | `TARGET_BLTU` | `bltu` → `sltu+beq+jump` |
 | `-mbgeu` | `TARGET_BGEU` | `bgeu` → `sltu+beq` |
-| `-mbyte` | `TARGET_BYTE` | `lb`/`lbu` → `lw`+align+extract; `-mno-byte` synthesizes via `lw`+shift |
-| `-mhalf` | `TARGET_HALF` | `lh`/`lhu` → `lw`+align+extract; `-mno-half` synthesizes via `lw`+shift |
+| `-mbyte` | `TARGET_BYTE` | `lb`/`lbu` → `lw`+align+extract; `sb` → `lw`+clear+insert+`sw`; `-mno-byte` synthesizes all via `lw`+shift |
+| `-mhalf` | `TARGET_HALF` | `lh`/`lhu` → `lw`+align+extract; `sh` → `lw`+clear+insert+`sw`; `-mno-half` synthesizes all via `lw`+shift |
 
 All have `Init(1)` (enabled by default); the `rvscN.h` header disables the appropriate flags via `CC1_SPEC`.
 

@@ -1056,73 +1056,83 @@ Como os shifts em sc1 são sintetizados via laços de `add`/`beq`, o custo total
 
 ==== SB
 
-A byte store is a read-modify-write: load the containing word, clear the target byte lane, insert the new byte, store back. All shift amounts are compile-time constants derived from `byte_pos = offset & 3`.
+Um store de byte é implementado como uma operação leitura-modificação-escrita (_read-modify-write_): carregar a word que contém o byte alvo, apagar os bits do byte, inserir o novo valor e guardar de volta. Como o ponteiro base é desconhecido em tempo de compilação, o deslocamento em bits é calculado em tempo de execução.
 
 ```c
-void sb(uint32_t base, int32_t offset, uint32_t rs2) {
-    uint32_t addr          = base + offset;
-    uint32_t aligned_addr  = addr & ~3u;
-    uint32_t byte_pos      = addr & 3u;
-    uint32_t shift         = byte_pos * 8u;
-    uint32_t old_word      = *(uint32_t *)aligned_addr;      // lw
-    uint32_t new_byte      = (rs2 & 0xFFu) << shift;         // sll: position new byte
-    uint32_t byte_mask     = 0xFFu << shift;                 // sll: mask at same position
-    uint32_t cleared_word  = old_word & ~byte_mask;          // and: erase target lane
-    uint32_t new_word      = cleared_word | new_byte;        // or:  insert new byte
+void sb(uint8_t *addr, uint32_t rs2) {
+    uint32_t aligned_addr  = (uint32_t)addr & ~3u;   // addr & -4
+    uint32_t byte_pos      = (uint32_t)addr & 3u;    // runtime: 0–3
+    uint32_t shift         = byte_pos * 8u;           // runtime: 0,8,16,24
+    uint32_t old_word      = *(uint32_t *)aligned_addr;     // lw
+    uint32_t byte_mask     = 0xFFu << shift;                // [sll] runtime shift
+    uint32_t new_byte      = (rs2 & 0xFFu) << shift;        // [sll] runtime shift
+    uint32_t new_word      = (old_word & ~byte_mask) | new_byte;
     *(uint32_t *)aligned_addr = new_word;                    // sw
 }
 ```
 
 ```asm
-# sb rs2, offset(rs1)   (byte_pos = offset & 3, compile-time constant: 0–3)
-lw    t0, (offset & ~3)(rs1)        # t0 = old word
-addi  t1, x0, 255                   # t1 = 0xFF
-and   t2, rs2, t1                   # t2 = rs2 & 0xFF  (isolate low byte)
-[sll  t2, t2, byte_pos * 8]         # position new byte
-[sll  t1, t1, byte_pos * 8]         # position byte mask
-not   t1, t1                        # t1 = ~mask  (derived)
-and   t0, t0, t1                    # clear target lane in old word
-or    t0, t0, t2                    # insert new byte
-sw    t0, (offset & ~3)(rs1)        # store back
+# sb rs2, 0(rs1)   — endereço em rs1, posição do byte desconhecida em compile-time
+li    t0, -4
+and   t3, rs1, t0           # t3 = rs1 & -4  (word alinhada)
+li    t0, 3
+and   t0, rs1, t0           # t0 = rs1 & 3  (byte_pos: 0–3)
+add   t0, t0, t0            # \
+add   t0, t0, t0            #  t0 = byte_pos * 8  (shift em bits; sll sintetizado)
+add   t0, t0, t0            # /
+lw    t1, 0(t3)             # t1 = old word
+li    t2, 255               # t2 = 0xFF
+[sll  t2, t2, t0]           # t2 = 0xFF << shift  (máscara; sll variável sintetizado)
+not   t2, t2                # t2 = ~máscara  (sintetizado)
+and   t1, t1, t2            # t1 = old_word & ~máscara  (apaga byte alvo)
+li    t2, 255
+and   t2, rs2, t2           # t2 = rs2 & 0xFF  (isola byte de entrada)
+[sll  t2, t2, t0]           # t2 = byte_valor << shift  (posiciona; sll variável sintetizado)
+or    t1, t1, t2            # t1 = palavra com byte inserido
+sw    t1, 0(t3)             # armazena de volta
 ```
 
-Each SB costs one `lw` (2 cycles) plus one `sw` (5 cycles) = 7 memory cycles.
+Cada `sb` custa um `lw` (2 ciclos) mais um `sw` (5 ciclos) = 7 ciclos de memória, mais a sequência de síntese de shifts variáveis.
 
 ==== SH
 
-Same read-modify-write pattern as SB but for 16-bit halfwords. `hw_pos = (offset >> 1) & 1` is 0 or 1. Constructing 0xFFFF uses `addi + sll + addi` since the value exceeds the 12-bit immediate range.
+Mesmo padrão de leitura-modificação-escrita do `sb`, mas para meia-palavra de 16 bits. A posição da meia-palavra na word (`addr & 2`, que resulta em 0 ou 2) e o deslocamento em bits (0 ou 16) são calculados em tempo de execução. O valor 0xFFFF é materializado com `lui + addi` (excede o imediato de 12 bits).
 
 ```c
-void sh(uint32_t base, int32_t offset, uint32_t rs2) {
-    uint32_t addr          = base + offset;
-    uint32_t aligned_addr  = addr & ~3u;
-    uint32_t hw_pos        = (addr >> 1u) & 1u;
-    uint32_t shift         = hw_pos * 16u;
-    uint32_t old_word      = *(uint32_t *)aligned_addr;      // lw
-    uint32_t new_hw        = (rs2 & 0xFFFFu) << shift;       // sll: position new halfword
-    uint32_t hw_mask       = 0xFFFFu << shift;               // sll: mask at same position
-    uint32_t cleared_word  = old_word & ~hw_mask;            // and: erase target lane
-    uint32_t new_word      = cleared_word | new_hw;          // or:  insert new halfword
+void sh(uint16_t *addr, uint32_t rs2) {
+    uint32_t aligned_addr = (uint32_t)addr & ~3u;    // addr & -4
+    uint32_t hw_pos       = (uint32_t)addr & 2u;     // runtime: 0 ou 2
+    uint32_t shift        = hw_pos * 8u;              // runtime: 0 ou 16
+    uint32_t old_word     = *(uint32_t *)aligned_addr;      // lw
+    uint32_t hw_mask      = 0xFFFFu << shift;               // [sll] runtime shift
+    uint32_t new_hw       = (rs2 & 0xFFFFu) << shift;       // [sll] runtime shift
+    uint32_t new_word     = (old_word & ~hw_mask) | new_hw;
     *(uint32_t *)aligned_addr = new_word;                    // sw
 }
 ```
 
 ```asm
-# sh rs2, offset(rs1)   (hw_pos = (offset >> 1) & 1, compile-time constant: 0 or 1)
-lw    t0, (offset & ~3)(rs1)        # t0 = old word
-addi  t1, x0, 1
-[sll  t1, t1, 16]                   # t1 = 0x10000
-addi  t1, t1, -1                    # t1 = 0xFFFF
-and   t2, rs2, t1                   # t2 = rs2 & 0xFFFF  (isolate low halfword)
-[sll  t2, t2, hw_pos * 16]          # position new halfword
-[sll  t1, t1, hw_pos * 16]          # position halfword mask
-not   t1, t1                        # t1 = ~mask  (derived)
-and   t0, t0, t1                    # clear target lane in old word
-or    t0, t0, t2                    # insert new halfword
-sw    t0, (offset & ~3)(rs1)        # store back
+# sh rs2, 0(rs1)   — endereço em rs1, posição da meia-palavra desconhecida em compile-time
+li    t0, -4
+and   t3, rs1, t0           # t3 = rs1 & -4  (word alinhada)
+li    t0, 2
+and   t0, rs1, t0           # t0 = rs1 & 2  (hw_pos: 0 ou 2)
+add   t0, t0, t0            # \
+add   t0, t0, t0            #  t0 = hw_pos * 8  (shift em bits: 0 ou 16; sll sintetizado)
+add   t0, t0, t0            # /
+lw    t1, 0(t3)             # t1 = old word
+li    t2, 65535             # t2 = 0xFFFF  (lui 0x10 + addi -1)
+[sll  t2, t2, t0]           # t2 = 0xFFFF << shift  (máscara; sll variável sintetizado)
+not   t2, t2                # t2 = ~máscara  (sintetizado)
+and   t1, t1, t2            # t1 = old_word & ~máscara  (apaga meia-palavra alvo)
+li    t2, 65535
+and   t2, rs2, t2           # t2 = rs2 & 0xFFFF  (isola meia-palavra de entrada)
+[sll  t2, t2, t0]           # t2 = hw_valor << shift  (posiciona; sll variável sintetizado)
+or    t1, t1, t2            # t1 = palavra com meia-palavra inserida
+sw    t1, 0(t3)             # armazena de volta
 ```
 
-Each SH costs one `lw` (2 cycles) plus one `sw` (5 cycles) = 7 memory cycles.
+Cada `sh` custa um `lw` (2 ciclos) mais um `sw` (5 ciclos) = 7 ciclos de memória, mais a sequência de síntese de shifts variáveis.
 
 === Jump
 
@@ -1639,6 +1649,51 @@ add   a0, a0, a0          # /
 ```
 
 Nenhum dos quatro casos emite as instruções proibidas; todos passam nos testes de síntese.
+
+=== Síntese de sb/sh em sc1
+
+Para validar que o target sc1 não emite `sb` nem `sh` — instruções não implementadas no hardware — dois testes verificam que cada store de byte ou meia-palavra é substituído por uma sequência de leitura-modificação-escrita baseada em `lw`+`sw`:
+
+```c
+// test/sc1_sb.c
+void test_sb(char *p, int v) { *p = v; }
+void test_sb_offset(char *p, int v) { p[2] = v; }
+
+// test/sc1_sh.c
+void test_sh(short *p, int v) { *p = v; }
+void test_sh_offset(short *p, int v) { p[1] = v; }
+```
+
+```sh
+for insn in sb sh; do
+  rvsc1-unknown-elf-gcc -S -O1 test/sc1_${insn}.c -o - \
+    | grep -E "^\s+${insn}\b" && echo FAIL || echo PASS
+done
+```
+
+O assembly gerado para `test_sb` usa apenas instruções sc1 — note o padrão leitura-modificação-escrita com shifts variáveis sintetizados:
+
+```asm
+li    a5, -4
+and   a3, a0, a5          # a3 = addr & -4  (word alinhada)
+li    a5, 3
+and   a0, a0, a5          # a0 = addr & 3  (byte_pos)
+add   a0, a0, a0          # \
+add   a0, a0, a0          #  a0 = byte_pos * 8  (sll constante sintetizado)
+add   a0, a0, a0          # /
+lw    a4, 0(a3)           # a4 = old word
+li    a5, 255
+[sll  a5, a5, a0]         # máscara = 0xFF << shift  (sll variável sintetizado)
+not   a5, a5              # ~máscara
+and   a4, a4, a5          # apaga byte alvo
+li    a5, 255
+and   a5, a1, a5          # isola byte de entrada
+[sll  a5, a5, a0]         # posiciona valor
+or    a4, a4, a5          # insere byte
+sw    a4, 0(a3)           # armazena de volta
+```
+
+Nenhum dos dois casos emite `sb` ou `sh`; ambos passam nos testes de síntese.
 
 === Ausência de fence em sc2
 

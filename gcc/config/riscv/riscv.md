@@ -1978,13 +1978,25 @@
   "&& reload_completed
    && REG_P (operands[1])
    && !paradoxical_subreg_p (operands[0])"
-  [(set (match_dup 0)
-	(ashift:GPR (match_dup 1) (match_dup 2)))
-   (set (match_dup 0)
-	(lshiftrt:GPR (match_dup 0) (match_dup 2)))]
+  [(const_int 0)]
   {
-    operands[1] = gen_lowpart (<GPR:MODE>mode, operands[1]);
-    operands[2] = GEN_INT(GET_MODE_BITSIZE(<GPR:MODE>mode) - 16);
+    if (TARGET_SHIFT)
+      {
+        rtx sh  = GEN_INT (GET_MODE_BITSIZE (<GPR:MODE>mode) - 16);
+        rtx src = gen_rtx_REG (<GPR:MODE>mode, REGNO (operands[1]));
+        emit_insn (gen_rtx_SET (operands[0],
+                                gen_rtx_ASHIFT (<GPR:MODE>mode, src, sh)));
+        emit_insn (gen_rtx_SET (operands[0],
+                                gen_rtx_LSHIFTRT (<GPR:MODE>mode, operands[0], sh)));
+      }
+    else
+      {
+        /* No shift instructions: load mask into op0, then AND with source. */
+        rtx src = gen_rtx_REG (<GPR:MODE>mode, REGNO (operands[1]));
+        emit_move_insn (operands[0], GEN_INT (0xFFFF));
+        emit_insn (gen_and<GPR:mode>3 (operands[0], src, operands[0]));
+      }
+    DONE;
   }
   [(set_attr "move_type" "shift_shift,load")
    (set_attr "type" "load")
@@ -2752,6 +2764,47 @@
 	(match_operand:HI 1 ""))]
   ""
 {
+  /* sc1 synthesis: sh addr, rs → lw aligned; clear halfword; or in value; sw */
+  if (!TARGET_HALF && MEM_P (operands[0]))
+    {
+      rtx addr      = force_reg (SImode, XEXP (operands[0], 0));
+      rtx t_neg4    = gen_reg_rtx (SImode);
+      emit_move_insn (t_neg4, GEN_INT (-4));
+      rtx t_aligned = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t_aligned, addr, t_neg4));
+
+      /* bit_off = (addr & 2) << 3  → 0 or 16 */
+      rtx t2        = gen_reg_rtx (SImode);
+      emit_move_insn (t2, GEN_INT (2));
+      rtx t_hoff    = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t_hoff, addr, t2));
+      rtx t_bit_off = gen_reg_rtx (SImode);
+      emit_insn (gen_ashlsi3 (t_bit_off, t_hoff, GEN_INT (3)));
+
+      /* Load aligned word */
+      rtx t_word    = gen_reg_rtx (SImode);
+      emit_move_insn (t_word, gen_rtx_MEM (SImode, t_aligned));
+
+      /* mask = 0xFFFF << bit_off; word &= ~mask */
+      rtx t_mask    = gen_reg_rtx (SImode);
+      emit_move_insn (t_mask, GEN_INT (0xFFFF));
+      emit_insn (gen_ashlsi3 (t_mask, t_mask, t_bit_off));
+      rtx t_nmask   = gen_reg_rtx (SImode);
+      emit_insn (gen_one_cmplsi2 (t_nmask, t_mask));
+      emit_insn (gen_andsi3 (t_word, t_word, t_nmask));
+
+      /* val = (src & 0xFFFF) << bit_off; word |= val */
+      rtx t_val     = gen_reg_rtx (SImode);
+      emit_move_insn (t_val, GEN_INT (0xFFFF));
+      emit_insn (gen_andsi3 (t_val,
+                             gen_lowpart (SImode, force_reg (HImode, operands[1])),
+                             t_val));
+      emit_insn (gen_ashlsi3 (t_val, t_val, t_bit_off));
+      emit_insn (gen_iorsi3 (t_word, t_word, t_val));
+
+      emit_move_insn (gen_rtx_MEM (SImode, t_aligned), t_word);
+      DONE;
+    }
   if (riscv_legitimize_move (HImode, operands[0], operands[1]))
     DONE;
 })
@@ -2796,6 +2849,47 @@
 	(match_operand:QI 1 ""))]
   ""
 {
+  /* sc1 synthesis: sb addr, rs → lw aligned; clear byte; or in value; sw */
+  if (!TARGET_BYTE && MEM_P (operands[0]))
+    {
+      rtx addr      = force_reg (SImode, XEXP (operands[0], 0));
+      rtx t_neg4    = gen_reg_rtx (SImode);
+      emit_move_insn (t_neg4, GEN_INT (-4));
+      rtx t_aligned = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t_aligned, addr, t_neg4));
+
+      /* bit_off = (addr & 3) << 3  → 0, 8, 16, or 24 */
+      rtx t3        = gen_reg_rtx (SImode);
+      emit_move_insn (t3, GEN_INT (3));
+      rtx t_boff    = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t_boff, addr, t3));
+      rtx t_bit_off = gen_reg_rtx (SImode);
+      emit_insn (gen_ashlsi3 (t_bit_off, t_boff, GEN_INT (3)));
+
+      /* Load aligned word */
+      rtx t_word    = gen_reg_rtx (SImode);
+      emit_move_insn (t_word, gen_rtx_MEM (SImode, t_aligned));
+
+      /* mask = 0xFF << bit_off; word &= ~mask */
+      rtx t_mask    = gen_reg_rtx (SImode);
+      emit_move_insn (t_mask, GEN_INT (0xFF));
+      emit_insn (gen_ashlsi3 (t_mask, t_mask, t_bit_off));
+      rtx t_nmask   = gen_reg_rtx (SImode);
+      emit_insn (gen_one_cmplsi2 (t_nmask, t_mask));
+      emit_insn (gen_andsi3 (t_word, t_word, t_nmask));
+
+      /* val = (src & 0xFF) << bit_off; word |= val */
+      rtx t_val     = gen_reg_rtx (SImode);
+      emit_move_insn (t_val, GEN_INT (0xFF));
+      emit_insn (gen_andsi3 (t_val,
+                             gen_lowpart (SImode, force_reg (QImode, operands[1])),
+                             t_val));
+      emit_insn (gen_ashlsi3 (t_val, t_val, t_bit_off));
+      emit_insn (gen_iorsi3 (t_word, t_word, t_val));
+
+      emit_move_insn (gen_rtx_MEM (SImode, t_aligned), t_word);
+      DONE;
+    }
   if (riscv_legitimize_move (QImode, operands[0], operands[1]))
     DONE;
 })
