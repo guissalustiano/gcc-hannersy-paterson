@@ -39,11 +39,13 @@ pkgs.mkShell {
 
     # Document
     typst
+    liberation_ttf
   ];
 
   shellHook = ''
     echo "GCC RISC-V (sc0–sc7) dev shell"
     echo "Build dirs: /home/salust/p/build-rv-sc{0..7}"
     echo "Source dir: /home/salust/p/gcc"
+    export TYPST_FONT_PATHS="${pkgs.liberation_ttf}/share/fonts/truetype"
   '';
 }

@@ -1687,5 +1687,7 @@ In instruction
 
 = References
 
+#bibliography("refs.bib", style: "ieee")
+
 = Apendice
 === Samples
