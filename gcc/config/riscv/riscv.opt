@@ -464,6 +464,14 @@ mbgeu
 Target Var(TARGET_BGEU) Init(1)
 Enable bgeu instruction emission (-mno-bgeu synthesizes via sltu+beq).
 
+mbyte
+Target Var(TARGET_BYTE) Init(1)
+Enable byte load/store instructions (lb, lbu); -mno-byte synthesizes via lw + extract.
+
+mhalf
+Target Var(TARGET_HALF) Init(1)
+Enable halfword load/store instructions (lh, lhu); -mno-half synthesizes via lw + extract.
+
 mautovec-segment
 Target Integer Var(riscv_mautovec_segment) Init(1)
 Enable (default) or disable generation of vector segment load/store instructions.

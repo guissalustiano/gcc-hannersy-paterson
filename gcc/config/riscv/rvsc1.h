@@ -33,4 +33,5 @@ along with GCC; see the file COPYING3.  If not see
   "%{!mfence:-mno-fence} %{!mauipc:-mno-auipc} %{!mshift:-mno-shift}" \
   " %{!mxor:-mno-xor} %{!mori:-mno-ori} %{!mandi:-mno-andi}" \
   " %{!mbne:-mno-bne} %{!mblt:-mno-blt} %{!mbge:-mno-bge}" \
-  " %{!mbltu:-mno-bltu} %{!mbgeu:-mno-bgeu}"
+  " %{!mbltu:-mno-bltu} %{!mbgeu:-mno-bgeu}" \
+  " %{!mbyte:-mno-byte} %{!mhalf:-mno-half}"

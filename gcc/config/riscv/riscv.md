@@ -1939,7 +1939,32 @@
   [(set (match_operand:GPR    0 "register_operand")
 	(zero_extend:GPR
 	    (match_operand:HI 1 "nonimmediate_operand")))]
-  "")
+  ""
+{
+  /* sc1 synthesis: lhu addr → lw word, extract halfword, zero-extend */
+  if (!TARGET_HALF && MEM_P (operands[1]))
+    {
+      rtx addr = force_reg (SImode, XEXP (operands[1], 0));
+      rtx t_neg4 = gen_reg_rtx (SImode);
+      emit_move_insn (t_neg4, GEN_INT (-4));
+      rtx t_aligned = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t_aligned, addr, t_neg4));
+      rtx t_word = gen_reg_rtx (SImode);
+      emit_move_insn (t_word, gen_rtx_MEM (SImode, t_aligned));
+      rtx t2 = gen_reg_rtx (SImode);
+      emit_move_insn (t2, GEN_INT (2));
+      rtx t_half_off = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t_half_off, addr, t2));
+      rtx t_bit_off = gen_reg_rtx (SImode);
+      emit_insn (gen_ashlsi3 (t_bit_off, t_half_off, GEN_INT (3)));
+      rtx t_shifted = gen_reg_rtx (SImode);
+      emit_insn (gen_lshrsi3 (t_shifted, t_word, t_bit_off));
+      rtx t_tmp = gen_reg_rtx (SImode);
+      emit_insn (gen_ashlsi3 (t_tmp, t_shifted, GEN_INT (16)));
+      emit_insn (gen_lshrsi3 (operands[0], t_tmp, GEN_INT (16)));
+      DONE;
+    }
+})
 
 (define_insn_and_split "*zero_extendhi<GPR:mode>2"
   [(set (match_operand:GPR    0 "register_operand"     "=r,r")
@@ -1984,6 +2009,29 @@
       SUBREG_PROMOTED_VAR_P (tdest) = 1;
       SUBREG_PROMOTED_SET (tdest, SRP_UNSIGNED);
       emit_move_insn (operands[0], tdest);
+      DONE;
+    }
+  /* sc1 synthesis: lbu addr → lw word, extract byte, zero-extend */
+  if (!TARGET_BYTE && MEM_P (operands[1]))
+    {
+      rtx addr = force_reg (SImode, XEXP (operands[1], 0));
+      rtx t_neg4 = gen_reg_rtx (SImode);
+      emit_move_insn (t_neg4, GEN_INT (-4));
+      rtx t_aligned = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t_aligned, addr, t_neg4));
+      rtx t_word = gen_reg_rtx (SImode);
+      emit_move_insn (t_word, gen_rtx_MEM (SImode, t_aligned));
+      rtx t3 = gen_reg_rtx (SImode);
+      emit_move_insn (t3, GEN_INT (3));
+      rtx t_byte_off = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t_byte_off, addr, t3));
+      rtx t_bit_off = gen_reg_rtx (SImode);
+      emit_insn (gen_ashlsi3 (t_bit_off, t_byte_off, GEN_INT (3)));
+      rtx t_shifted = gen_reg_rtx (SImode);
+      emit_insn (gen_lshrsi3 (t_shifted, t_word, t_bit_off));
+      rtx t_tmp = gen_reg_rtx (SImode);
+      emit_insn (gen_ashlsi3 (t_tmp, t_shifted, GEN_INT (24)));
+      emit_insn (gen_lshrsi3 (operands[0], t_tmp, GEN_INT (24)));
       DONE;
     }
 })
@@ -2068,6 +2116,34 @@
       SUBREG_PROMOTED_VAR_P (tdest) = 1;
       SUBREG_PROMOTED_SET (tdest, SRP_SIGNED);
       emit_move_insn (operands[0], tdest);
+      DONE;
+    }
+  /* sc1 synthesis: lb/lh addr → lw word, extract byte/halfword, sign-extend */
+  if (MEM_P (operands[1])
+      && ((<SHORT:MODE>mode == QImode && !TARGET_BYTE)
+	  || (<SHORT:MODE>mode == HImode && !TARGET_HALF)))
+    {
+      int shift_bits = GET_MODE_BITSIZE (SImode)
+		       - GET_MODE_BITSIZE (<SHORT:MODE>mode);
+      rtx addr = force_reg (SImode, XEXP (operands[1], 0));
+      rtx t_neg4 = gen_reg_rtx (SImode);
+      emit_move_insn (t_neg4, GEN_INT (-4));
+      rtx t_aligned = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t_aligned, addr, t_neg4));
+      rtx t_word = gen_reg_rtx (SImode);
+      emit_move_insn (t_word, gen_rtx_MEM (SImode, t_aligned));
+      rtx t_mask = gen_reg_rtx (SImode);
+      emit_move_insn (t_mask,
+		      GEN_INT (<SHORT:MODE>mode == QImode ? 3 : 2));
+      rtx t_unit_off = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t_unit_off, addr, t_mask));
+      rtx t_bit_off = gen_reg_rtx (SImode);
+      emit_insn (gen_ashlsi3 (t_bit_off, t_unit_off, GEN_INT (3)));
+      rtx t_shifted = gen_reg_rtx (SImode);
+      emit_insn (gen_lshrsi3 (t_shifted, t_word, t_bit_off));
+      rtx t_tmp = gen_reg_rtx (SImode);
+      emit_insn (gen_ashlsi3 (t_tmp, t_shifted, GEN_INT (shift_bits)));
+      emit_insn (gen_ashrsi3 (operands[0], t_tmp, GEN_INT (shift_bits)));
       DONE;
     }
 })
