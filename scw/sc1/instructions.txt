@@ -23,7 +23,3 @@ jalr
 # branch
 beq
 bge     # ble pseudo (loop bounds check) expands to bge rs2, rs1, offset
-
-# comparisons (used in blt/bge/bltu/bgeu branch synthesis)
-slt
-sltu

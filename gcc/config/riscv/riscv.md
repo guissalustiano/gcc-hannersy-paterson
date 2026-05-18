@@ -3946,6 +3946,60 @@
 		      (pc)))]
   ""
 {
+  if (!TARGET_SLT && GET_MODE (operands[1]) == SImode)
+    {
+      enum rtx_code code = GET_CODE (operands[0]);
+      if (code != EQ && code != NE)
+        {
+          rtx op0 = operands[1];
+          rtx op1 = force_reg (SImode, operands[2]);
+          bool use_eq = false;
+
+          switch (code)
+            {
+            case GT:  { rtx t = op0; op0 = op1; op1 = t; } code = LT;  break;
+            case GTU: { rtx t = op0; op0 = op1; op1 = t; } code = LTU; break;
+            case GE:  use_eq = true;                         code = LT;  break;
+            case GEU: use_eq = true;                         code = LTU; break;
+            case LE:  { rtx t = op0; op0 = op1; op1 = t; } use_eq = true; code = LT;  break;
+            case LEU: { rtx t = op0; op0 = op1; op1 = t; } use_eq = true; code = LTU; break;
+            default:  break;
+            }
+
+          rtx tmp = gen_reg_rtx (SImode);
+          if (code == LT)
+            {
+              rtx diff = gen_reg_rtx (SImode);
+              rtx t1   = gen_reg_rtx (SImode);
+              rtx t2   = gen_reg_rtx (SImode);
+              emit_insn (gen_subsi3 (diff, op0, op1));
+              emit_insn (gen_xorsi3 (t1, op0, op1));
+              emit_insn (gen_xorsi3 (t2, op0, diff));
+              emit_insn (gen_andsi3 (t1, t1, t2));
+              emit_insn (gen_xorsi3 (diff, diff, t1));
+              emit_insn (gen_lshrsi3 (tmp, diff, GEN_INT (31)));
+            }
+          else
+            {
+              rtx diff = gen_reg_rtx (SImode);
+              rtx t1   = gen_reg_rtx (SImode);
+              rtx t2   = gen_reg_rtx (SImode);
+              rtx t3   = gen_reg_rtx (SImode);
+              emit_insn (gen_subsi3 (diff, op0, op1));
+              emit_insn (gen_one_cmplsi2 (t1, op0));
+              emit_insn (gen_andsi3 (t2, t1, op1));
+              emit_insn (gen_xorsi3 (t3, op0, op1));
+              emit_insn (gen_one_cmplsi2 (t3, t3));
+              emit_insn (gen_andsi3 (t3, t3, diff));
+              emit_insn (gen_iorsi3 (t2, t2, t3));
+              emit_insn (gen_lshrsi3 (tmp, t2, GEN_INT (31)));
+            }
+          riscv_expand_conditional_branch (operands[3],
+                                           use_eq ? EQ : NE,
+                                           tmp, const0_rtx);
+          DONE;
+        }
+    }
   riscv_expand_conditional_branch (operands[3], GET_CODE (operands[0]),
 				   operands[1], operands[2]);
   DONE;
@@ -4108,6 +4162,68 @@
 	     (match_operand:GPR 3 "nonmemory_operand")]))]
   ""
 {
+  if (!TARGET_SLT && GET_MODE (operands[2]) == SImode)
+    {
+      enum rtx_code code = GET_CODE (operands[1]);
+      rtx op0 = operands[2];
+      rtx op1 = force_reg (SImode, operands[3]);
+      bool invert = false;
+
+      /* Normalise to LT or LTU; GT/LE/GE are handled by operand swap + invert. */
+      switch (code)
+        {
+        case GT:  { rtx t = op0; op0 = op1; op1 = t; } code = LT;  break;
+        case GTU: { rtx t = op0; op0 = op1; op1 = t; } code = LTU; break;
+        case GE:  invert = true;                         code = LT;  break;
+        case GEU: invert = true;                         code = LTU; break;
+        case LE:  { rtx t = op0; op0 = op1; op1 = t; } invert = true; code = LT;  break;
+        case LEU: { rtx t = op0; op0 = op1; op1 = t; } invert = true; code = LTU; break;
+        default:  break;
+        }
+
+      rtx result = invert ? gen_reg_rtx (SImode) : operands[0];
+
+      if (code == LT)
+        {
+          /* slt synthesis: rd = ((a - b) corrected for signed overflow) >> 31.
+             overflow = (a^b) & (a^diff); corrected = diff ^ overflow. */
+          rtx diff = gen_reg_rtx (SImode);
+          rtx t1   = gen_reg_rtx (SImode);
+          rtx t2   = gen_reg_rtx (SImode);
+          emit_insn (gen_subsi3 (diff, op0, op1));
+          emit_insn (gen_xorsi3 (t1, op0, op1));
+          emit_insn (gen_xorsi3 (t2, op0, diff));
+          emit_insn (gen_andsi3 (t1, t1, t2));
+          emit_insn (gen_xorsi3 (diff, diff, t1));
+          emit_insn (gen_lshrsi3 (result, diff, GEN_INT (31)));
+        }
+      else
+        {
+          /* sltu synthesis: rd = borrow >> 31.
+             borrow = (~a & b) | (~(a^b) & diff). */
+          rtx diff = gen_reg_rtx (SImode);
+          rtx t1   = gen_reg_rtx (SImode);
+          rtx t2   = gen_reg_rtx (SImode);
+          rtx t3   = gen_reg_rtx (SImode);
+          emit_insn (gen_subsi3 (diff, op0, op1));
+          emit_insn (gen_one_cmplsi2 (t1, op0));
+          emit_insn (gen_andsi3 (t2, t1, op1));
+          emit_insn (gen_xorsi3 (t3, op0, op1));
+          emit_insn (gen_one_cmplsi2 (t3, t3));
+          emit_insn (gen_andsi3 (t3, t3, diff));
+          emit_insn (gen_iorsi3 (t2, t2, t3));
+          emit_insn (gen_lshrsi3 (result, t2, GEN_INT (31)));
+        }
+
+      if (invert)
+        {
+          /* Invert 0/1: 1 - result avoids XOR synthesis which can produce
+             zero_extract RTL that later splits into ashift when !TARGET_SHIFT. */
+          rtx one = force_reg (SImode, const1_rtx);
+          emit_insn (gen_subsi3 (operands[0], one, result));
+        }
+      DONE;
+    }
   riscv_expand_int_scc (operands[0], GET_CODE (operands[1]), operands[2],
 			operands[3]);
   DONE;
@@ -4265,7 +4381,7 @@
   [(set (match_operand:GPR           0 "register_operand" "= r")
 	(any_gt:GPR (match_operand:X 1 "register_operand" "  r")
 		    (match_operand:X 2 "reg_or_0_operand" " rJ")))]
-  ""
+  "TARGET_SLT"
   "sgt<u>\t%0,%1,%z2"
   [(set_attr "type" "slt")
    (set_attr "mode" "<X:MODE>")])
@@ -4274,7 +4390,7 @@
   [(set (match_operand:GPR           0 "register_operand" "=r")
 	(any_ge:GPR (match_operand:X 1 "register_operand" " r")
 		    (const_int 1)))]
-  ""
+  "TARGET_SLT"
   "slti<u>\t%0,zero,%1"
   [(set_attr "type" "slt")
    (set_attr "mode" "<X:MODE>")])
@@ -4283,7 +4399,7 @@
   [(set (match_operand:GPR           0 "register_operand" "= r")
 	(any_lt:GPR (match_operand:X 1 "register_operand" "  r")
 		    (match_operand:X 2 "arith_operand"    " rI")))]
-  ""
+  "TARGET_SLT"
   "slt%i2<u>\t%0,%1,%2"
   [(set_attr "type" "slt")
    (set_attr "mode" "<X:MODE>")])
@@ -4292,7 +4408,7 @@
   [(set (match_operand:GPR           0 "register_operand" "=r")
 	(any_le:GPR (match_operand:X 1 "register_operand" " r")
 		    (match_operand:X 2 "sle_operand" "")))]
-  ""
+  "TARGET_SLT"
 {
   operands[2] = GEN_INT (INTVAL (operands[2]) + 1);
   return "slt%i2<u>\t%0,%1,%2";
@@ -4330,8 +4446,9 @@
 			      (match_operand 2 "const_int_operand")
 			      (match_operand 3 "const_int_operand"))
 	      (const_int 0)))]
-  "(INTVAL (operands[3]) < 11
-    && INTVAL (operands[2]) + INTVAL (operands[3]) == BITS_PER_WORD)"
+  "TARGET_SLT
+   && INTVAL (operands[3]) < 11
+   && INTVAL (operands[2]) + INTVAL (operands[3]) == BITS_PER_WORD"
 {
   operands[2] = GEN_INT (HOST_WIDE_INT_1U << INTVAL (operands[3]));
   return "sltiu\t%0,%1,%2";
@@ -4344,7 +4461,7 @@
 	(eq:X (lshiftrt:X (match_operand:X 1 "register_operand" "r")
 			  (match_operand 2 "const_int_operand"))
 	      (const_int 0)))]
-  "INTVAL (operands[2]) < 11"
+  "TARGET_SLT && INTVAL (operands[2]) < 11"
 {
   operands[2] = GEN_INT (HOST_WIDE_INT_1U << INTVAL (operands[2]));
   return "sltiu\t%0,%1,%2";

@@ -32,6 +32,7 @@ along with GCC; see the file COPYING3.  If not see
 #define CC1_SPEC \
   "%{!mfence:-mno-fence} %{!mauipc:-mno-auipc} %{!mshift:-mno-shift}" \
   " %{!mxor:-mno-xor} %{!mori:-mno-ori} %{!mandi:-mno-andi}" \
+  " %{!mslt:-mno-slt}" \
   " %{!mbne:-mno-bne} %{!mblt:-mno-blt} %{!mbge:-mno-bge}" \
   " %{!mbltu:-mno-bltu} %{!mbgeu:-mno-bgeu}" \
   " %{!mbyte:-mno-byte} %{!mhalf:-mno-half}"

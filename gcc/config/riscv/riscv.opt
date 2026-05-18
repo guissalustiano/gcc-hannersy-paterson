@@ -464,6 +464,10 @@ mbgeu
 Target Var(TARGET_BGEU) Init(1)
 Enable bgeu instruction emission (-mno-bgeu synthesizes via sltu+beq).
 
+mslt
+Target Var(TARGET_SLT) Init(1)
+Enable slt/sltu instruction emission (-mno-slt synthesizes via sub/xor/and/lshr).
+
 mbyte
 Target Var(TARGET_BYTE) Init(1)
 Enable byte load/store instructions (lb, lbu); -mno-byte synthesizes via lw + extract.

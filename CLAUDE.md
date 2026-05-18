@@ -96,7 +96,8 @@ Each header overrides `CC1_SPEC` to inject `-mno-*` flags automatically so users
 
 ```c
 // sc1 example
-#define CC1_SPEC "%{!mfence:-mno-fence} %{!mauipc:-mno-auipc} %{!mshift:-mno-shift}"
+#define CC1_SPEC "%{!mfence:-mno-fence} %{!mauipc:-mno-auipc} %{!mshift:-mno-shift}" \
+  " %{!mslt:-mno-slt} ..."
 ```
 
 ### 3. Machine Description (`gcc/config/riscv/riscv.md`)
@@ -122,6 +123,8 @@ The core of all instruction synthesis. Key patterns:
 - **`define_insn "*branch<mode>"`** — bne synthesis: `beq a,b,skip; lui t1,%hi(L); addi t1,t1,%lo(L); jr t1; skip:`.
 - **`define_insn "jump"`** — unconditional jump synthesis when `!TARGET_AUIPC`: `lui t1,%hi(L); addi t1,t1,%lo(L); jr t1` (needed for back-edges in synthesized loops).
 - **`one_cmplsi2` (not)** — when `!TARGET_XOR`: `sub rd, x0, rs; addi rd, rd, -1` (identity `~x = −x − 1`).
+- **`cstore<GPR:mode>4` expand** — when `!TARGET_SLT && SImode`: synthesizes all ordered comparisons (LT, LTU, GE, GEU, GT, GTU, LE, LEU) before calling `riscv_expand_int_scc`. GT/LE/GTU/LEU are reduced to LT/LTU by swapping operands; GE/GEU/LE/LEU invert the result using `sub rd, one, result` (avoids XOR→zero_extract→ashift split that fails with `!TARGET_SHIFT`). `slt` synthesis: `sub diff, a, b; xor t1, a, b; xor t2, a, diff; and t1, t1, t2; xor diff, diff, t1; lshr rd, diff, 31`. `sltu` synthesis: `sub diff, a, b; not t1, a; and t2, t1, b; xor t3, a, b; not t3, t3; and t3, t3, diff; or t2, t2, t3; lshr rd, t2, 31`.
+- **`@cbranch<mode>4` expand** — when `!TARGET_SLT && SImode && code ≠ EQ/NE`: emits the same slt/sltu synthesis into a temp register, then calls `riscv_expand_conditional_branch` with `NE` (for LT/LTU/GT/GTU) or `EQ` (for GE/GEU/LE/LEU) so the branch tests `tmp != 0` or `tmp == 0`. This intercepts before `*branch<mode>` so its raw `"slt\t..."` asm templates are never reached with `!TARGET_SLT`.
 
 ### 4. Target options (`gcc/config/riscv/riscv.opt`)
 
@@ -136,10 +139,11 @@ Custom boolean flags added for this project:
 | `-mori` | `TARGET_ORI` | `ori` → `li t, imm; or` |
 | `-mandi` | `TARGET_ANDI` | `andi` → `li t, imm; and`; zero-extend byte handled by special split |
 | `-mbne` | `TARGET_BNE` | `bne` → `beq+skip+lui+addi+jr` |
-| `-mblt` | `TARGET_BLT` | `blt` → `slt+beq+jump` |
-| `-mbge` | `TARGET_BGE` | `bge` → `slt+beq` |
-| `-mbltu` | `TARGET_BLTU` | `bltu` → `sltu+beq+jump` |
-| `-mbgeu` | `TARGET_BGEU` | `bgeu` → `sltu+beq` |
+| `-mslt` | `TARGET_SLT` | `slt`/`sltu` → synthesized via sub/xor/and/lshr; `blt`/`bge`/`bltu`/`bgeu` branches use synthesized comparison + `beq`/`bne` |
+| `-mblt` | `TARGET_BLT` | `blt` → synthesized comparison+`beq+jump` (when `TARGET_SLT`: `slt+beq+jump`) |
+| `-mbge` | `TARGET_BGE` | `bge` → synthesized comparison+`beq` (when `TARGET_SLT`: `slt+beq`) |
+| `-mbltu` | `TARGET_BLTU` | `bltu` → synthesized comparison+`beq+jump` (when `TARGET_SLT`: `sltu+beq+jump`) |
+| `-mbgeu` | `TARGET_BGEU` | `bgeu` → synthesized comparison+`beq` (when `TARGET_SLT`: `sltu+beq`) |
 | `-mbyte` | `TARGET_BYTE` | `lb`/`lbu` → `lw`+align+extract; `sb` → `lw`+clear+insert+`sw`; `-mno-byte` synthesizes all via `lw`+shift |
 | `-mhalf` | `TARGET_HALF` | `lh`/`lhu` → `lw`+align+extract; `sh` → `lw`+clear+insert+`sw`; `-mno-half` synthesizes all via `lw`+shift |
 

@@ -900,6 +900,10 @@ xor  t0, t0, t1     # corrected = diff ^ overflow     (derived; t1,t2 now free)
 [srl rd,  t0, 31]   # rd        = corrected >> 31     (derived)
 ```
 
+Implementado via flag `-mno-slt` (`TARGET_SLT = 0`) no expand `cstore<GPR:mode>4` de `riscv.md`.
+As variantes GE/GT/LE são reduzidas a LT com troca de operandos e/ou inversão (`1 - result`).
+O intercept em `@cbranch<mode>4` garante que os padrões de síntese de `blt`/`bge` em `*branch<mode>` nunca emitem `slt` como string de asm direta.
+
 ==== sltu
 
 ```c
@@ -922,6 +926,9 @@ or    t2, t2, t3     # borrow    = generated | propagated
 [srl  rd,  t2, 31]   # rd        = borrow >> 31       (derived)
 ```
 
+Implementado junto com `slt` pelo mesmo flag `-mno-slt`. A síntese do GCC expande
+`not` via `sub x0, rs; addi -1` e `xor` via De Morgan, produzindo apenas `sub`, `and`, `or`, `addi`.
+
 ==== Bne
 
 ```asm
@@ -934,29 +941,33 @@ skip:
 ==== Bge - Branch greather than or equal
 
 ```asm
-slt  t0, rs1, rs2 # t0 = 1 if rs1 <  rs2, else 0
-beq  t0, x0, target 
+# com -mno-slt: sintetiza slt em t0, depois beq t0, x0, target
+[slt t0, rs1, rs2]  # t0 = 1 if rs1 < rs2, else 0  (derived)
+beq  t0, x0, target
 ```
 
 ==== Blt - Branch less than
 
 ```asm
-slt  t0, rs1, rs2      # t0 = 1 if rs1 < rs2, else 0
-bne  t0, x0, target 
+# com -mno-slt: sintetiza slt em t0, depois bne t0, x0, target
+[slt t0, rs1, rs2]  # t0 = 1 if rs1 < rs2, else 0  (derived)
+bne  t0, x0, target
 ```
 
 ==== Bgeu
 
 ```asm
-sltu  t0, rs1, rs2 # t0 = 1 if rs1 <  rs2, else 0
-beq  t0, x0, target 
+# com -mno-slt: sintetiza sltu em t0, depois beq t0, x0, target
+[sltu t0, rs1, rs2]  # t0 = 1 if rs1 < rs2 (unsigned), else 0  (derived)
+beq  t0, x0, target
 ```
 
 ==== Bltu
 
 ```asm
-sltu  t0, rs1, rs2      # t0 = 1 if rs1 < rs2, else 0
-bne  t0, x0, target 
+# com -mno-slt: sintetiza sltu em t0, depois bne t0, x0, target
+[sltu t0, rs1, rs2]  # t0 = 1 if rs1 < rs2 (unsigned), else 0  (derived)
+bne  t0, x0, target
 ```
 
 === Imediate 
