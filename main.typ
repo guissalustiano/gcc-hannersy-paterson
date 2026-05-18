@@ -76,7 +76,7 @@
     #text(weight: "bold", size: 14pt)[#titulo]
     #v(2cm)
   ]
-  
+
   // Preamble aligned from middle to right [cite: 2790]
   grid(
     columns: (1fr, 1fr),
@@ -86,10 +86,10 @@
       #set par(leading: 0.65em) // Single spacing for preamble
       Trabalho de conclusão de curso apresentado ao Departamento de Engenharia de Computação e Sistemas Digitais da Escola Politécnica da Universidade de São Paulo para obtenção do Título de Engenheiro.
       \ \
-      Orientador: #orientador 
+      Orientador: #orientador
     ]
   )
-  
+
   v(1fr)
   align(center)[#local \ #data]
 }
@@ -136,7 +136,7 @@
     v(1cm)
     text("Aprovado em: ____/____/______")
     v(1cm)
-    
+
     align(center)[
       #set par(leading: 0.65em)
       #line(length: 60%) \ #orientador (Orientador) \ PCS - USP
@@ -148,6 +148,59 @@
     v(1fr)
   }
 
+// --- Dedicatória ---
+#pagebreak()
+#v(1fr)
+#align(right)[
+  #block(width: 60%)[
+    #set text(style: "italic")
+    Este trabalho é dedicado às crianças adultas que,
+    quando pequenas, sonharam em se tornar cientistas.
+  ]
+]
+
+// --- Agradecimentos ---
+#heading(level: 1, numbering: none, outlined: false)[Agradecimentos]
+
+Os agradecimentos principais são direcionados a ...
+
+// --- Resumo ---
+#heading(level: 1, numbering: none, outlined: false)[Resumo]
+
+O resumo deve ressaltar o objetivo, o método, os resultados e as
+conclusões do documento. Deve ser escrito em parágrafo único, e
+tipicamente é menor do que uma página.
+
+*Palavras-chave*: GCC. RISC-V. Compilador. Processador educacional.
+
+// --- Abstract ---
+#heading(level: 1, numbering: none, outlined: false)[Abstract]
+
+This is the english abstract.
+
+*Keywords*: GCC. RISC-V. Compiler. Educational processor.
+
+// --- Lista de Abreviaturas e Siglas ---
+#heading(level: 1, numbering: none)[Lista de Abreviaturas e Siglas]
+
+#table(
+  columns: (3cm, 1fr),
+  stroke: none,
+  inset: (y: 4pt),
+  [*ABI*],    [_Application Binary Interface_],
+  [*AMO*],    [_Atomic Memory Operation_],
+  [*CSR*],    [_Control and Status Register_],
+  [*ELF*],    [_Executable and Linkable Format_],
+  [*GCC*],    [_GNU Compiler Collection_],
+  [*GNU*],    [_GNU's Not Unix_],
+  [*ISA*],    [_Instruction Set Architecture_],
+  [*PIC*],    [_Position-Independent Code_],
+  [*RISC*],   [_Reduced Instruction Set Computer_],
+  [*RISC-V*], [_Reduced Instruction Set Computer -- Five_],
+  [*RTL*],    [_Register Transfer Language_],
+  [*RV32I*],  [RISC-V, inteiros, 32 bits],
+  [*RV64I*],  [RISC-V, inteiros, 64 bits],
+)
 
 // --- Table of Contents (Sumário) [cite: 2514] ---
 #heading(level: 1, numbering: none)[SUMÁRIO]
@@ -155,7 +208,7 @@
 
 // --- Textual Elements Setup ---
 #set page(numbering: "1")
-  
+
 
 = Introdução
 // Contexto
@@ -1172,7 +1225,7 @@ jal ra, double
 ebreak  # stop execution
 
 double:
-    add  a0, a0, a0 
+    add  a0, a0, a0
     jalr zero, 0(ra)
 ```
 
@@ -1747,7 +1800,7 @@ Com `TARGET_FENCE = 0`, o padrão `mem_thread_fence` em `sync.md` executa `DONE`
 - Stone risc-v (sem syscall)
 - RISC-v official test implementation
 - Qemu baremetal
-- rocket 
+- rocket
 - so o sc0 a sc2
 - monociclo
 - so o sc0 e sc1
