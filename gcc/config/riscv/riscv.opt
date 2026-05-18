@@ -468,6 +468,10 @@ mslt
 Target Var(TARGET_SLT) Init(1)
 Enable slt/sltu instruction emission (-mno-slt synthesizes via sub/xor/and/lshr).
 
+mslti
+Target Var(TARGET_SLTI) Init(1)
+Enable slti/sltiu instruction emission (-mno-slti loads immediate into register before slt/sltu).
+
 mbyte
 Target Var(TARGET_BYTE) Init(1)
 Enable byte load/store instructions (lb, lbu); -mno-byte synthesizes via lw + extract.

@@ -4162,6 +4162,11 @@
 	     (match_operand:GPR 3 "nonmemory_operand")]))]
   ""
 {
+  /* slti/sltiu disabled: force immediate into register so slt/sltu (register
+     form) is used instead.  Mirrors the -mori / -mandi pattern. */
+  if (TARGET_SLT && !TARGET_SLTI && CONST_INT_P (operands[3]))
+    operands[3] = force_reg (GET_MODE (operands[2]), operands[3]);
+
   if (!TARGET_SLT && GET_MODE (operands[2]) == SImode)
     {
       enum rtx_code code = GET_CODE (operands[1]);
@@ -4396,19 +4401,23 @@
    (set_attr "mode" "<X:MODE>")])
 
 (define_insn "@slt<u>_<X:mode><GPR:mode>3"
-  [(set (match_operand:GPR           0 "register_operand" "= r")
-	(any_lt:GPR (match_operand:X 1 "register_operand" "  r")
-		    (match_operand:X 2 "arith_operand"    " rI")))]
+  [(set (match_operand:GPR           0 "register_operand" "= r, r")
+	(any_lt:GPR (match_operand:X 1 "register_operand" "  r, r")
+		    (match_operand:X 2 "arith_operand"    "  r, I")))]
   "TARGET_SLT"
   "slt%i2<u>\t%0,%1,%2"
   [(set_attr "type" "slt")
-   (set_attr "mode" "<X:MODE>")])
+   (set_attr "mode" "<X:MODE>")
+   (set_attr_alternative "enabled"
+     [(const_string "yes")
+      (if_then_else (match_test "TARGET_SLTI")
+        (const_string "yes") (const_string "no"))])])
 
 (define_insn "*sle<u>_<X:mode><GPR:mode>"
   [(set (match_operand:GPR           0 "register_operand" "=r")
 	(any_le:GPR (match_operand:X 1 "register_operand" " r")
 		    (match_operand:X 2 "sle_operand" "")))]
-  "TARGET_SLT"
+  "TARGET_SLT && TARGET_SLTI"
 {
   operands[2] = GEN_INT (INTVAL (operands[2]) + 1);
   return "slt%i2<u>\t%0,%1,%2";

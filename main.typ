@@ -970,9 +970,23 @@ beq  t0, x0, target
 bne  t0, x0, target
 ```
 
-=== Imediate 
+=== Imediate
 - (ORI, ANDI, SLLI, SRAI, SRLI, XORI, SLTI, SLTIU)
 Only uses ADDI to load a value to a temporary register and call non imediate operation
+
+==== SLTI / SLTIU
+
+`slti rd, rs1, imm` and `sltiu rd, rs1, imm` compare a register against an integer literal.
+Synthesis (`-mno-slti`): load the immediate into a temporary register, then use the register form.
+
+```asm
+li    t, imm          # load immediate into register
+slt   rd, rs1, t      # slti rd, rs1, imm  →  slt rd, rs1, t
+sltu  rd, rs1, t      # sltiu rd, rs1, imm →  sltu rd, rs1, t
+```
+
+This synthesis fires only when `TARGET_SLT && !TARGET_SLTI` (native `slt`/`sltu` available but not the immediate forms).
+When `!TARGET_SLT`, the immediate is handled automatically by the full sub/xor/and/lshr synthesis path via `force_reg`.
 
 === Load
 
