@@ -21,3 +21,7 @@ install:
 test:
     PATH={{prefix}}/bin:$PATH \
     python3 {{justfile_directory()}}/../test/run_tests.py {{target}} {{justfile_directory()}}/instructions.txt
+
+spike-test:
+    PATH={{prefix}}/bin:$PATH \
+    python3 {{justfile_directory()}}/../test/spike/run_spike_tests.py {{target}}
