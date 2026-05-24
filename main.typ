@@ -154,10 +154,10 @@
 #align(right)[
   #block(width: 60%)[
     #set text(style: "italic")
-    Este trabalho é dedicado às crianças adultas que,
-    quando pequenas, sonharam em se tornar cientistas.
+    Para que serve tantos codigos, se a vida nao é programada e as melhores coisas não tem logica.
   ]
 ]
+// TODO
 
 // --- Agradecimentos ---
 #heading(level: 1, numbering: none, outlined: false)[Agradecimentos]
@@ -258,299 +258,96 @@ mas n suporta todas as intrucoes do isntruction set
 // sistema, melhoria de um sistema existente, definição de processo, técnicas, procedimentos, ou
 // um outro tipo de trabalho acordado com o orientador.
 
+O trabalho busca desenvolver simplificações no backend do gcc de forma a suportar implementações simplificadas de um processador RISC-V, de forma a permitir implementações intermediarias funcionais. Para isso foram definidos 6 processadores com targets especiais que geram apenas o conjunto de instruções por eles suportado.
 
-== Monociclo implementation
-- monocicle
-- Barramento wishbone
-- RAM memory:
-  - 2 cycle read
-  - 5 cycles write
+== rvsc0 - Monociclo básico
+O rvsc0 é a implementação mais simples, um monociclo de 32 bits, com sua implementação descrita no Cap 4.4 do Hannersy e Patterson, A Simple Implementation Scheme
 
-Espaco de endereçamento:
-- Boot: 0x200
-- RAM: final do endereçamento
-- Perifericos: 0xFC00000000
-	- registrador unico para o led
 
-== Monociclo - sc0
+#quote[In this section, we look at what might be thought of as a simple implementation of our RISC-V subset. [...] This simple implementation covers load word (lw), store word (sw), branch if equal (beq), and the arithmetic-logical instructions add, sub, and, and or.]
 
-Apenas implementação basica do texto (cap 4.4) - fig 4.25
-- lw
-- sw
-- beq
-- add
-- addi
-- sub
-- and
-- or
+
+// TODO: make it a table
+Conforme mencionado no texto essa implementação suporta apenas as instruções:
+- lw - load word
+- sw - store word
+- beq - branch if equal
+- add - aritimetic add
+- addi - arithmetic add with imediate
+- sub - arithmetic subtraction
+- and - bitwese and
+- or - bitwise or
+
+Assim sendo o compilador deve ser capaz de gerar apenas essas instruções para esse processador.
 
 === Limitações
-Dado a não existência de instruções que interajam com o PC, essa implementação não suporta funções que não possam ser inlinadas, falhando na compilacao.
-- subrotina
+Essa implementação não possui nenhuma interação com o PC, dessa forma não é possível adicionar suporte a subrotina recursivas, apenas static call. Nesse caso o compilador deve emitir um erro.
 
 // é possivel "voltar" usando beq
 // talvez n devemos inline pois fica mais didatico de olhar o codigo
 
+=== Detalhes de implementação
+Na implementação utilizada pelos alunos o processador tem acesso a uma RAM de 2 ciclos de leitura e 5 ciclos de escrita, um barramento wishbone. O espaço de endereçamento é como segue:
+- Boot: 0x200
+- RAM: final do endereçamento
+- Perifericos: 0xFC00000000
+	- registrador único para o led
 
-== Monociclo extendido - sc1
 
-Target: `rvsc1`
+== rvsc1 - Monociclo extendido
+// TODO: check if lui is that much necessary
+O rvsc1 estende o rvsc0 com as instruções load upper immediate (lui) e Jump and Link Register (jalr), e desta forma remover a limitação de funções recursivas do processador anterior.
 
-Flags equivalentes: `-march=rv32i -mabi=ilp32 -mno-fence -mno-auipc -mno-shift -mno-xor -mno-ori -mno-andi -mno-bne -mno-blt -mno-bge -mno-bltu -mno-bgeu -mno-byte -mno-half`
-
-Suporta todas as instruções do sc0 mais as instruções mínimas para suporte a funções em C:
-
+Desta forma o instruction set completo do rvsc1 fica:
+// TODO: make a table
 - Herda do sc0: `lw`, `sw`, `beq`, `add`, `addi`, `sub`, `and`, `or`
 - `jalr` — retorno de função e chamadas indiretas
 - `lui` — carregamento de endereços absolutos (metade alta de 32 bits)
 
-=== Compilando o toolchain
+== rvsc2 - Monociclo sem fance e controle
+O rvsc2 implementa todas as instruções do padrão rv32i exceto instruções de Memory Order, CSR Access e System. Por se tratar de um mono-ciclo single core as instruções de memory order podem ser retiradas sem perda de função /*rewrite*/, Da mesma forma as instruções de CSR e Systema foram retiradas por se tratar de intruções especificas do sistema operacional, sem uso para códigos simples bare metal.
 
-```sh
-../gcc/configure \
-    --target=rvsc1-unknown-elf \
-    --prefix=$(pwd)/install \
-    --enable-languages=c \
-    --with-newlib
-```
-
-=== Limitações
-
-Não implementa `auipc` nem `jal`: o processador não tem acesso ao PC para aritmética de endereço. Consequentemente:
-
-- Todo código deve ser carregado em endereço absoluto fixo (sem PIC).
-- Chamadas de função são feitas via `lui`+`jalr` (endereço absoluto) em vez do pseudo `call` (que gera `auipc`+`jalr`, relaxado pelo linker para `jal`).
-- Desvios incondicionais dentro de funções (laços, `if`/`else`) são sintetizados via `lui`+`jalr` em vez de `j label` (`jal x0, label`).
-- Referências a símbolos globais usam `lui`+`lo12` em vez de `auipc`+`lo12`.
-
-Não implementa cargas de byte ou meia-palavra (`lb`, `lbu`, `lh`, `lhu`): o hardware apenas suporta `lw` (word). O compilador sintetiza todas as quatro instruções via `lw` + alinhamento + extração de bits (ver @sc1-lb-synthesis).
-
-==== Risco: registrador temporário nos saltos absolutos
-
-A síntese `lui t1,%hi(L); jalr x0,t1,%lo(L)` consome um registrador temporário que, no caso normal (`j label`), não seria necessário. O compilador aloca esse registrador via a análise de pseudo-registradores do RTL, sem conflito com valores vivos — mas o código gerado é maior (8 bytes em vez de 4) e mais lento.
-
-==== Síntese de bne
-
-`bne a,b,L` é sintetizado via inversão da condição:
-
-```asm
-beq  a, b, skip
-lui  t1, %hi(L)
-addi t1, t1, %lo(L)
-jr   t1
-skip:
-```
-
-O custo é 16 bytes (4 instruções) contra 4 bytes de um `bne` nativo. O registrador `t1` é consumido como temporário, sem conflito com valores vivos.
-
-==== Síntese de sll constante
-
-`sll rd, rs, n` com deslocamento constante é sintetizado via `add` repetido — cada dobramento equivale a um deslocamento de um bit à esquerda:
-
-```asm
-; slli a0, a0, 3  (shift left by 3)
-add a0, a0, a0     ; a0 = a0 << 1
-add a0, a0, a0     ; a0 = a0 << 2
-add a0, a0, a0     ; a0 = a0 << 3
-```
-
-O custo é `n` instruções `add` para um deslocamento de `n` bits.
-
-==== Síntese de srl
-
-`srl rd, rs1, rs2` é sintetizado extraindo cada bit de `rs1` da posição `shift` em diante e colocando-o na posição correspondente do resultado. O algoritmo usa apenas `and`, `or`, `add` e `beq`:
-
-```c
-result = 0; out_mask = 1; in_mask = 1 << shift;
-while (in_mask != 0) {
-    if ((rs1 & in_mask) != 0) result |= out_mask;
-    out_mask <<= 1; in_mask <<= 1;
-}
-```
-
-O custo é (32 − shift) iterações de ~7 instruções. Para `srl` variável, adiciona-se um loop de `shift` iterações para calcular `in_mask = 1 << shift`.
-
-==== Síntese de sll variável
-
-`sll rd, rs1, rs2` com deslocamento variável é sintetizado via laço de decremento: o valor é dobrado (`add rd, rd, rd`) exatamente `rs2 & 31` vezes.
-
-```c
-uint32_t sll(uint32_t rs1, uint32_t rs2) {
-    uint32_t rd = rs1;
-    for (uint32_t i = rs2 & 31; i != 0; i--)
-        rd += rd;
-    return rd;
-}
-```
-
-```asm
-# rd = rs1 << rs2
-    andi  count, rs2, 31    # count = rs2 & 31
-    mv    rd, rs1
-    beq   count, x0, done
-loop:
-    add   rd, rd, rd        # rd <<= 1
-    addi  count, count, -1
-    beq   count, x0, done
-    beq   x0, x0, loop
-done:
-```
-
-O custo é até 31 iterações de ~5 instruções para shift máximo de 31 bits.
-
-==== Síntese de sra
-
-`sra rd, rs1, rs2` preserva o bit de sinal. A síntese executa primeiro `srl` e depois, se o bit 31 de `rs1` era 1, aplica extensão de sinal via OR de `sign_mask = 0xFFFFFFFF << (32 − shift)`.
-
-```c
-int32_t sra(int32_t rs1, uint32_t rs2) {
-    uint32_t shift = rs2 & 31;
-    uint32_t result = (uint32_t)srl((uint32_t)rs1, shift);
-    if (shift == 0 || (rs1 >> 31) == 0) return result;
-    uint32_t sign_mask = (uint32_t)(-1) << (32u - shift);
-    return result | sign_mask;
-}
-```
-
-Para deslocamento constante `n`, `sign_mask` é calculado em tempo de compilação:
-
-```asm
-; srai rd, rs1, 3  →  sign_mask = -1 << 29 = 0xE0000000
-    and   t6, rs1, 0x80000000   # salva bit de sinal
-    [srl  rd, rs1, 3]           # deslocamento lógico (síntese)
-    beq   t6, x0, done          # positivo: srl == sra
-    ori   rd, rd, 0xE0000000    # OR sign_mask
-done:
-```
-
-Para deslocamento variável, `sign_mask` é construído em tempo de execução via laço de deslocamento à esquerda de `-1`:
-
-```asm
-# sra rd, rs1, rs2
-    and   t6, rs1, 0x80000000   # bit de sinal (antes do srl)
-    [srl  rd, rs1, rs2]         # deslocamento lógico (síntese)
-    beq   t6, x0, done          # positivo: srl == sra
-    andi  shift, rs2, 31
-    beq   shift, x0, done       # shift==0 mod 32: sem extensão
-    neg   n, shift
-    addi  n, n, 32              # n = 32 - shift
-    li    sign_mask, -1         # 0xFFFFFFFF
-ext_sll:
-    add   sign_mask, sign_mask, sign_mask
-    addi  n, n, -1
-    beq   n, x0, apply
-    beq   x0, x0, ext_sll
-apply:
-    or    rd, rd, sign_mask
-done:
-```
-
-==== Síntese de not
-
-`not rd, rs1` (pseudo-instrução `xori rd, rs1, -1`) é sintetizada via negação aritmética seguida de decremento:
-
-```asm
-; not rd, rs1  →  ~x = -x - 1
-neg   rd, rs1    # rd = -rs1  (sub rd, x0, rs1)
-addi  rd, rd, -1 # rd = -rs1 - 1 = ~rs1
-```
-
-A identidade algébrica usada é `~x = −x − 1`, válida para inteiros em complemento de dois. O custo é 2 instruções (`sub` + `addi`), contra 1 instrução `xori` nativa.
-
-==== Síntese de xor
-
-`xor rd, rs1, rs2` é sintetizado via identidade de De Morgan: `a ^ b = ~(a & b) & (a | b)`. A negação intermediária é implementada com a síntese de `not` já definida:
-
-```asm
-; xor rd, rs1, rs2
-and   t0, rs1, rs2   # t0 = rs1 & rs2
-or    t1, rs1, rs2   # t1 = rs1 | rs2
-neg   t0, t0         # t0 = -(rs1 & rs2)
-addi  t0, t0, -1     # t0 = ~(rs1 & rs2)
-and   rd, t0, t1     # rd = ~(rs1&rs2) & (rs1|rs2) = rs1 ^ rs2
-```
-
-O custo é 5 instruções para operandos registro. Com `-mno-ori` ativo (sc1), `xori rd, rs1, imm` sintetiza `ori` como `li`+`or`, resultando em 6 instruções no total.
-
-==== Síntese de ori
-
-`ori rd, rs1, imm` é sintetizado carregando o imediato em um registrador temporário e usando `or` registro-registro:
-
-```asm
-; ori rd, rs1, imm
-li    t, imm         # t = imm  (addi t, x0, imm para pequenos; lui+addi para grandes)
-or    rd, rs1, t     # rd = rs1 | t
-```
-
-O custo é 2 instruções (`li` + `or`) contra 1 instrução `ori` nativa. Para evitar que o passe `combine` do GCC reinsira o imediato diretamente no padrão `or`, a alternativa imediata do `define_insn` é desabilitada via atributo `enabled` quando `!TARGET_ORI`.
-
-==== Síntese de andi
-
-`andi rd, rs1, imm` é sintetizado carregando o imediato em um registrador temporário e usando `and` registro-registro:
-
-```asm
-; andi rd, rs1, imm
-li    t, imm         # t = imm  (addi t, x0, imm para pequenos; lui+addi para grandes)
-and   rd, rs1, t     # rd = rs1 & t
-```
-
-O custo é 2 instruções (`li` + `and`) contra 1 instrução `andi` nativa. A alternativa imediata do `define_insn "*and<mode>3"` é desabilitada via atributo `enabled` quando `!TARGET_ANDI`, impedindo que o passe `combine` reinsira o imediato.
-
-Um caso especial é a instrução de zero-extension `andi rd, rs, 0xff`, emitida pelo padrão `*zero_extendqi<SUPERQI:mode>2_internal` para converter um byte em inteiro. Esse padrão tem alternativa própria (não passa pelo `and<mode>3` expand) e é tratado por um `define_insn_and_split "*zero_extendqisi2_noandi"` que toma prioridade sobre o padrão andi quando `!TARGET_ANDI`. Após reload, o split gera:
-
-```asm
-; (unsigned char) rs  →  rd = rs & 0xff
-li    rd, 255        # rd = 0xff  (reutiliza rd como temporário; early-clobber garante rd ≠ rs)
-and   rd, rs, rd     # rd = rs & 0xff
-```
-
-== Monociclo sem fance e controle - sc2
-Supporta todas as instruções do rv32i instruções de mem. ordering, csr acess e system
-
-Target: `rvsc2`
-
-Flags equivalentes: `-march=rv32i -mabi=ilp32 -mno-fence`
-
-Instruction:
+Assim sendo a ISA deste processador é:
+// TODO: make a table
 - add
 - addi
 - and
 - andi
-auipc
-beq
-bge
-bgeu
-blt
-bltu
-bne
-jal
-jalr
-lb
-lbu
-lh
-lhu
-lui
-lw
-or
-ori
-sb
-sh
-sll
-slli
-slt
-slti
-sltiu
-sltu
-sra
-srai
-srl
-srli
-sub
-sw
-xor
-xori
+- auipc
+- beq
+- bge
+- bgeu
+- blt
+- bltu
+- bne
+- jal
+- jalr
+- lb
+- lbu
+- lh
+- lhu
+- lui
+- lw
+- or
+- ori
+- sb
+- sh
+- sll
+- slli
+- slt
+- slti
+- sltiu
+- sltu
+- sra
+- srai
+- srl
+- srli
+- sub
+- sw
+- xor
+- xori
 
-except:
+Com a excessao das seguintes instrucoes:
 - Memory Order:
   - `fence`   - Instruction fence
   - `fence.i` - Fence
@@ -568,86 +365,21 @@ except:
   - `SRET` - Supervisior Exception Return
   - `WFI` - Wait for Interrupt
 
+== rvsc3 - Monociclo rv32i
+O rvsc3 suporta todas as instruções do sc2 mais as instruções Memory Order, CSR Access e System, supportando assim o set inteiro do sc3.
 
+// TODO: 
+// explain NOPs em processadores pipeline e RISC-V
+// explain that we are generating this target to make easies to progress on that
 
-== Monociclo rv32i - sc3
+== rvsc4 - Monociclo rvi64
+O sc4 é um monociclo de 64bits com o conjunto inteiro de instruções do rv64i.
 
-Target: `rvsc3`
-
-Flags equivalentes: `-march=rv32i -mabi=ilp32`
-
-Suporta todas as instruções do sc2 mais `fence`.
-CSR, system e `fence.i` não são emitidos pelo GCC para programas C normais.
-
-requisito:
-o gcc n pode gerar nenhuma nop para intrucoes de desvio pois eh mono ciclo, logo n tem necessidade
-
-=== NOPs em processadores pipeline e RISC-V
-
-Em processadores com pipeline, ao avaliar se um desvio condicional é tomado, o processador já buscou e começou a decodificar as instruções seguintes, criando um _hazard_ de controle:
-
-```asm
-beq  t0, x0, target   # decisão do desvio ainda não conhecida
-add  t1, t2, t3       # já está no pipeline!
-```
-
-Duas soluções clássicas existem:
-
-1. _Stall do pipeline_ — o hardware congela até o desvio ser resolvido, desperdiçando ciclos.
-2. _Branch delay slot_ — a ISA define arquiteturalmente que a instrução imediatamente após o desvio sempre executa. O compilador é responsável por preencher esse slot com uma instrução útil ou, quando não há nenhuma, com um `nop`. O MIPS adota essa abordagem.
-
-O RISC-V eliminou deliberadamente os branch delay slots, deixando o hazard de controle como responsabilidade exclusiva do hardware (stall ou predição de desvio). Essa decisão é documentada no manual da ISA @riscv-spec. // TODO: citar também Patterson & Waterman "The RISC-V Reader" cap. 2 após validar referência
-O compilador não emite nenhum `nop` especial após desvios — `beq` é simplesmente `beq`:
-
-```asm
-// MIPS: delay slot é parte do contrato arquitetural
-beq  $t0, $zero, target
-nop                        // obrigatório (ou instrução útil)
-
-// RISC-V: sem delay slot, hardware trata o hazard
-beq  t0, x0, target
-add  t1, t2, t3            // instrução seguinte normal, sem semântica especial
-```
-
-Como o processador educacional deste trabalho é _monociclo_ — cada instrução completa atomicamente antes da próxima começar — não existe pipeline, não existem hazards de controle e, portanto, não existe branch delay slot. O requisito do target sc3 é garantir que o GCC não emita tais NOPs, o que para RISC-V já é o comportamento natural do backend.
-
-=== Compilando o toolchain
-
-```sh
-../gcc/configure \
-    --target=rvsc3-unknown-elf \
-    --prefix=$(pwd)/install \
-    --enable-languages=c \
-    --with-newlib
-```
-
-== Monociclo rvi64 - sc4
-
-Target: `rvsc4`
-
-Flags equivalentes: `-march=rv64i -mabi=lp64`
-
-Suporta todas as instruções do sc3 mais as instruções exclusivas do rv64i:
-
+Além das instruções implementadas pelo sc3, ele conta com:
 - Memória 64 bits: `ld`, `sd`, `lwu`
 - Operações em word com resultado estendido a 64 bits (sufixo W): `addw`, `subw`, `addiw`, `sllw`, `srlw`, `sraw`, `slliw`, `srliw`, `sraiw`
 
-=== Compilando o toolchain
-
-```sh
-../gcc/configure \
-    --target=rvsc4-unknown-elf \
-    --prefix=$(pwd)/install \
-    --enable-languages=c \
-    --with-newlib
-```
-
-== Monociclo rvi64 com multiplicação - sc5
-
-Target: `rvsc5`
-
-Flags equivalentes: `-march=rv64im -mabi=lp64`
-
+== rvsc5 - Monociclo rvi64 com multiplicação
 Suporta todas as instruções do sc4 mais a extensão M (multiplicação e divisão inteira):
 
 - Multiplicação: `mul`, `mulw`, `mulh`, `mulhu`, `mulhsu`
@@ -658,21 +390,9 @@ Suporta todas as instruções do sc4 mais a extensão M (multiplicação e divis
 
 As variantes com sufixo W operam em 32 bits e estendem o resultado a 64 bits por sinal, seguindo a mesma convenção de `addw`, `subw` e demais instruções W do sc4.
 
-=== Compilando o toolchain
+Suportando assim o isa rv32im.
 
-```sh
-../gcc/configure \
-    --target=rvsc5-unknown-elf \
-    --prefix=$(pwd)/install \
-    --enable-languages=c \
-    --with-newlib
-```
-
-== Monociclo float point - sc6
-
-Target: `rvsc6`
-
-Flags equivalentes: `-march=rv64imfd_zicsr -mabi=lp64d`
+== rvsc6 - Monociclo float point
 
 Suporta todas as instruções do sc5 mais as extensões F (single) e D (double) de ponto flutuante, conforme o green card do H&P.
 
@@ -705,29 +425,12 @@ Conversões (rv64):
 - `fcvt.w.d`, `fcvt.wu.d`, `fcvt.l.d`, `fcvt.lu.d` — double → int
 - `fcvt.s.d`, `fcvt.d.s` — conversão entre single e double
 
-=== Limitação: garantia de instrução
+Eh importante notar que as extensoes FD foram revisadas e adicionadas novas operacoes, por motivos didaticos esse processador implementa apenas aquelas presentes no livro.
+// TODO: precisa de fontes e talvez citas quais foram as operacoes novas?
 
-O flag `-march=rv64imfd_zicsr` informa ao GCC quais instruções ele _pode_ emitir — não impede a emissão de tudo dentro das extensões habilitadas. Em particular, `Zicsr` está no march porque a especificação RISC-V 20191213 exige quando F/D estão presentes (para o registrador `fcsr`), mas isso significa que o GCC _pode_ emitir instruções CSR (`csrrw`, `csrrs`, etc.) se o programa usar tratamento de exceções de ponto flutuante (`fesetround`, `feclearexcept`, `-ftrapping-math`).
 
-Para programas de alunos típicos (aritmética FP sem tratamento de exceções), o GCC não emite instruções CSR. Porém, a garantia não é absoluta — se um aluno usar a API `<fenv.h>`, instruções CSR serão geradas. Uma solução completa exigiria uma opção `-mno-csr` análoga ao `-mno-fence`, guardando todos os padrões CSR no backend RISC-V. Isso está pendente de investigação.
-
-=== Compilando o toolchain
-
-```sh
-../gcc/configure \
-    --target=rvsc6-unknown-elf \
-    --prefix=$(pwd)/install \
-    --enable-languages=c \
-    --with-newlib
-```
-
-== Monociclo atômico - sc7
-
-Target: `rvsc7`
-
-Flags equivalentes: `-march=rv64imafd_zicsr -mabi=lp64d`
-
-Suporta todas as instruções do sc6 mais a extensão A (operações atômicas sobre memória).
+== rvsc7 - Monociclo atômico
+Suporta todas as instruções do sc6 mais a extensão A (operações atômicas sobre memória), implementando o conjunto rv64imsfa.
 As variantes `.w` operam em 32 bits (sign-extend para 64); as variantes `.d` operam em 64 bits.
 
 Load-reserved e store-conditional:
@@ -745,16 +448,7 @@ AMO (atomic memory operations):
 - `amomin.w`, `amomin.d` — mínimo assinado atômico
 - `amominu.w`, `amominu.d` — mínimo não-assinado atômico
 
-=== Compilando o toolchain
-
-```sh
-../gcc/configure \
-    --target=rvsc7-unknown-elf \
-    --prefix=$(pwd)/install \
-    --enable-languages=c \
-    --with-newlib
-```
-
+// TODO: checar se tem divergencia da ultima extensa para a implementada no livro
 
 = Método de Trabalho
 // - Apresentar o processo de desenvolvimento do trabalho, através das suas fases (por
@@ -1243,6 +937,271 @@ double:
     add     a0, a0, a0
     jalr    zero, 0(ra)
 ```
+
+
+=== Compilando o toolchain
+
+```sh
+../gcc/configure \
+    --target=rvsc1-unknown-elf \
+    --prefix=$(pwd)/install \
+    --enable-languages=c \
+    --with-newlib
+```
+
+=== Limitações
+
+Não implementa `auipc` nem `jal`: o processador não tem acesso ao PC para aritmética de endereço. Consequentemente:
+
+- Todo código deve ser carregado em endereço absoluto fixo (sem PIC).
+- Chamadas de função são feitas via `lui`+`jalr` (endereço absoluto) em vez do pseudo `call` (que gera `auipc`+`jalr`, relaxado pelo linker para `jal`).
+- Desvios incondicionais dentro de funções (laços, `if`/`else`) são sintetizados via `lui`+`jalr` em vez de `j label` (`jal x0, label`).
+- Referências a símbolos globais usam `lui`+`lo12` em vez de `auipc`+`lo12`.
+
+Não implementa cargas de byte ou meia-palavra (`lb`, `lbu`, `lh`, `lhu`): o hardware apenas suporta `lw` (word). O compilador sintetiza todas as quatro instruções via `lw` + alinhamento + extração de bits (ver @sc1-lb-synthesis).
+
+==== Risco: registrador temporário nos saltos absolutos
+
+A síntese `lui t1,%hi(L); jalr x0,t1,%lo(L)` consome um registrador temporário que, no caso normal (`j label`), não seria necessário. O compilador aloca esse registrador via a análise de pseudo-registradores do RTL, sem conflito com valores vivos — mas o código gerado é maior (8 bytes em vez de 4) e mais lento.
+
+==== Síntese de bne
+
+`bne a,b,L` é sintetizado via inversão da condição:
+
+```asm
+beq  a, b, skip
+lui  t1, %hi(L)
+addi t1, t1, %lo(L)
+jr   t1
+skip:
+```
+
+O custo é 16 bytes (4 instruções) contra 4 bytes de um `bne` nativo. O registrador `t1` é consumido como temporário, sem conflito com valores vivos.
+
+==== Síntese de sll constante
+
+`sll rd, rs, n` com deslocamento constante é sintetizado via `add` repetido — cada dobramento equivale a um deslocamento de um bit à esquerda:
+
+```asm
+; slli a0, a0, 3  (shift left by 3)
+add a0, a0, a0     ; a0 = a0 << 1
+add a0, a0, a0     ; a0 = a0 << 2
+add a0, a0, a0     ; a0 = a0 << 3
+```
+
+O custo é `n` instruções `add` para um deslocamento de `n` bits.
+
+==== Síntese de srl
+
+`srl rd, rs1, rs2` é sintetizado extraindo cada bit de `rs1` da posição `shift` em diante e colocando-o na posição correspondente do resultado. O algoritmo usa apenas `and`, `or`, `add` e `beq`:
+
+```c
+result = 0; out_mask = 1; in_mask = 1 << shift;
+while (in_mask != 0) {
+    if ((rs1 & in_mask) != 0) result |= out_mask;
+    out_mask <<= 1; in_mask <<= 1;
+}
+```
+
+O custo é (32 − shift) iterações de ~7 instruções. Para `srl` variável, adiciona-se um loop de `shift` iterações para calcular `in_mask = 1 << shift`.
+
+==== Síntese de sll variável
+
+`sll rd, rs1, rs2` com deslocamento variável é sintetizado via laço de decremento: o valor é dobrado (`add rd, rd, rd`) exatamente `rs2 & 31` vezes.
+
+```c
+uint32_t sll(uint32_t rs1, uint32_t rs2) {
+    uint32_t rd = rs1;
+    for (uint32_t i = rs2 & 31; i != 0; i--)
+        rd += rd;
+    return rd;
+}
+```
+
+```asm
+# rd = rs1 << rs2
+    andi  count, rs2, 31    # count = rs2 & 31
+    mv    rd, rs1
+    beq   count, x0, done
+loop:
+    add   rd, rd, rd        # rd <<= 1
+    addi  count, count, -1
+    beq   count, x0, done
+    beq   x0, x0, loop
+done:
+```
+
+O custo é até 31 iterações de ~5 instruções para shift máximo de 31 bits.
+
+==== Síntese de sra
+
+`sra rd, rs1, rs2` preserva o bit de sinal. A síntese executa primeiro `srl` e depois, se o bit 31 de `rs1` era 1, aplica extensão de sinal via OR de `sign_mask = 0xFFFFFFFF << (32 − shift)`.
+
+```c
+int32_t sra(int32_t rs1, uint32_t rs2) {
+    uint32_t shift = rs2 & 31;
+    uint32_t result = (uint32_t)srl((uint32_t)rs1, shift);
+    if (shift == 0 || (rs1 >> 31) == 0) return result;
+    uint32_t sign_mask = (uint32_t)(-1) << (32u - shift);
+    return result | sign_mask;
+}
+```
+
+Para deslocamento constante `n`, `sign_mask` é calculado em tempo de compilação:
+
+```asm
+; srai rd, rs1, 3  →  sign_mask = -1 << 29 = 0xE0000000
+    and   t6, rs1, 0x80000000   # salva bit de sinal
+    [srl  rd, rs1, 3]           # deslocamento lógico (síntese)
+    beq   t6, x0, done          # positivo: srl == sra
+    ori   rd, rd, 0xE0000000    # OR sign_mask
+done:
+```
+
+Para deslocamento variável, `sign_mask` é construído em tempo de execução via laço de deslocamento à esquerda de `-1`:
+
+```asm
+# sra rd, rs1, rs2
+    and   t6, rs1, 0x80000000   # bit de sinal (antes do srl)
+    [srl  rd, rs1, rs2]         # deslocamento lógico (síntese)
+    beq   t6, x0, done          # positivo: srl == sra
+    andi  shift, rs2, 31
+    beq   shift, x0, done       # shift==0 mod 32: sem extensão
+    neg   n, shift
+    addi  n, n, 32              # n = 32 - shift
+    li    sign_mask, -1         # 0xFFFFFFFF
+ext_sll:
+    add   sign_mask, sign_mask, sign_mask
+    addi  n, n, -1
+    beq   n, x0, apply
+    beq   x0, x0, ext_sll
+apply:
+    or    rd, rd, sign_mask
+done:
+```
+
+==== Síntese de not
+
+`not rd, rs1` (pseudo-instrução `xori rd, rs1, -1`) é sintetizada via negação aritmética seguida de decremento:
+
+```asm
+; not rd, rs1  →  ~x = -x - 1
+neg   rd, rs1    # rd = -rs1  (sub rd, x0, rs1)
+addi  rd, rd, -1 # rd = -rs1 - 1 = ~rs1
+```
+
+A identidade algébrica usada é `~x = −x − 1`, válida para inteiros em complemento de dois. O custo é 2 instruções (`sub` + `addi`), contra 1 instrução `xori` nativa.
+
+==== Síntese de xor
+
+`xor rd, rs1, rs2` é sintetizado via identidade de De Morgan: `a ^ b = ~(a & b) & (a | b)`. A negação intermediária é implementada com a síntese de `not` já definida:
+
+```asm
+; xor rd, rs1, rs2
+and   t0, rs1, rs2   # t0 = rs1 & rs2
+or    t1, rs1, rs2   # t1 = rs1 | rs2
+neg   t0, t0         # t0 = -(rs1 & rs2)
+addi  t0, t0, -1     # t0 = ~(rs1 & rs2)
+and   rd, t0, t1     # rd = ~(rs1&rs2) & (rs1|rs2) = rs1 ^ rs2
+```
+
+O custo é 5 instruções para operandos registro. Com `-mno-ori` ativo (sc1), `xori rd, rs1, imm` sintetiza `ori` como `li`+`or`, resultando em 6 instruções no total.
+
+==== Síntese de ori
+
+`ori rd, rs1, imm` é sintetizado carregando o imediato em um registrador temporário e usando `or` registro-registro:
+
+```asm
+; ori rd, rs1, imm
+li    t, imm         # t = imm  (addi t, x0, imm para pequenos; lui+addi para grandes)
+or    rd, rs1, t     # rd = rs1 | t
+```
+
+O custo é 2 instruções (`li` + `or`) contra 1 instrução `ori` nativa. Para evitar que o passe `combine` do GCC reinsira o imediato diretamente no padrão `or`, a alternativa imediata do `define_insn` é desabilitada via atributo `enabled` quando `!TARGET_ORI`.
+
+==== Síntese de andi
+
+`andi rd, rs1, imm` é sintetizado carregando o imediato em um registrador temporário e usando `and` registro-registro:
+
+```asm
+; andi rd, rs1, imm
+li    t, imm         # t = imm  (addi t, x0, imm para pequenos; lui+addi para grandes)
+and   rd, rs1, t     # rd = rs1 & t
+```
+
+O custo é 2 instruções (`li` + `and`) contra 1 instrução `andi` nativa. A alternativa imediata do `define_insn "*and<mode>3"` é desabilitada via atributo `enabled` quando `!TARGET_ANDI`, impedindo que o passe `combine` reinsira o imediato.
+
+Um caso especial é a instrução de zero-extension `andi rd, rs, 0xff`, emitida pelo padrão `*zero_extendqi<SUPERQI:mode>2_internal` para converter um byte em inteiro. Esse padrão tem alternativa própria (não passa pelo `and<mode>3` expand) e é tratado por um `define_insn_and_split "*zero_extendqisi2_noandi"` que toma prioridade sobre o padrão andi quando `!TARGET_ANDI`. Após reload, o split gera:
+
+```asm
+; (unsigned char) rs  →  rd = rs & 0xff
+li    rd, 255        # rd = 0xff  (reutiliza rd como temporário; early-clobber garante rd ≠ rs)
+and   rd, rs, rd     # rd = rs & 0xff
+```
+
+== Monociclo sem fance e controle - sc2
+Supporta todas as instruções do rv32i instruções de mem. ordering, csr acess e system
+
+Target: `rvsc2`
+
+Flags equivalentes: `-march=rv32i -mabi=ilp32 -mno-fence`
+
+Instruction:
+- add
+- addi
+- and
+- andi
+auipc
+beq
+bge
+bgeu
+blt
+bltu
+bne
+jal
+jalr
+lb
+lbu
+lh
+lhu
+lui
+lw
+or
+ori
+sb
+sh
+sll
+slli
+slt
+slti
+sltiu
+sltu
+sra
+srai
+srl
+srli
+sub
+sw
+xor
+xori
+
+except:
+- Memory Order:
+  - `fence`   - Instruction fence
+  - `fence.i` - Fence
+  - `sfence.vma` - Address Transalation Fence
+- CSR Access:
+  - `CSRRWI` - CSR Read/Write Immediate
+  - `CSRRSI` - CSR Read/Set Immediate
+  - `CSRRCI` - CSR Read/Clear Immediate
+  - `CSRRW`  - CSR Read/Write
+  - `CSRRS`  - CSR Read/Set
+  - `CSRRC`  - CSR Read/Clear
+- System:
+  - `ECALL` - Enviroemnt Call
+  - `EBREAK` - Enviroment Breakpoint
+  - `SRET` - Supervisior Exception Return
+  - `WFI` - Wait for Interrupt
 
 == Implementation
 
