@@ -159,19 +159,10 @@
 ]
 // TODO
 
-// --- Agradecimentos ---
-#heading(level: 1, numbering: none, outlined: false)[Agradecimentos]
+// --- Acknowledgements ---
+#heading(level: 1, numbering: none, outlined: false)[Acknowledgements]
 
-Os agradecimentos principais são direcionados a ...
-
-// --- Resumo ---
-#heading(level: 1, numbering: none, outlined: false)[Resumo]
-
-O resumo deve ressaltar o objetivo, o método, os resultados e as
-conclusões do documento. Deve ser escrito em parágrafo único, e
-tipicamente é menor do que uma página.
-
-*Palavras-chave*: GCC. RISC-V. Compilador. Processador educacional.
+The main acknowledgements are directed to ...
 
 // --- Abstract ---
 #heading(level: 1, numbering: none, outlined: false)[Abstract]
@@ -180,8 +171,8 @@ This is the english abstract.
 
 *Keywords*: GCC. RISC-V. Compiler. Educational processor.
 
-// --- Lista de Abreviaturas e Siglas ---
-#heading(level: 1, numbering: none)[Lista de Abreviaturas e Siglas]
+// --- List of Abbreviations and Acronyms ---
+#heading(level: 1, numbering: none)[List of Abbreviations and Acronyms]
 
 #table(
   columns: (3cm, 1fr),
@@ -196,27 +187,26 @@ This is the english abstract.
   [*ISA*],    [_Instruction Set Architecture_],
   [*PIC*],    [_Position-Independent Code_],
   [*RISC*],   [_Reduced Instruction Set Computer_],
-  [*RISC-V*], [_Reduced Instruction Set Computer -- Five_],
   [*RTL*],    [_Register Transfer Language_],
-  [*RV32I*],  [RISC-V, inteiros, 32 bits],
-  [*RV64I*],  [RISC-V, inteiros, 64 bits],
+  [*RV32I*],  [RISC-V, integers, 32 bits],
+  [*RV64I*],  [RISC-V, integers, 64 bits],
 )
 
-// --- Table of Contents (Sumário) [cite: 2514] ---
-#heading(level: 1, numbering: none)[SUMÁRIO]
+// --- Table of Contents ---
+#heading(level: 1, numbering: none)[TABLE OF CONTENTS]
 #outline(title: none, indent: auto, depth: 3)
 
 // --- Textual Elements Setup ---
 #set page(numbering: "1")
 
 
-= Introdu,c~ao
+= Introduction
 
-== Motiva,c~ao
-// - Apresenta o estado de arte resumido do assunto que ser'a o tema do desenvolvimento
-// do trabalho, elaborado com base nos trabalhos consultados.
-// - Os trabalhos consultados devem estar citados e referenciados no texto.
-// - Apresenta o contexto em que o trabalho ser'a desenvolvido.
+== Motivation
+// - Presents a brief state-of-the-art overview of the subject that will be the theme of the work,
+// based on the consulted references.
+// - Consulted works must be cited and referenced in the text.
+// - Presents the context in which the work will be developed.
 
 _Computer Organization and Design: RISC-V Edition_ by Patterson and Hennessy @patterson2020 is one of the most widely adopted references in undergraduate computer architecture courses worldwide. At the University of S~ao Paulo's Escola Polit'ecnica, the course PCS3225 --- Digital Systems 2 --- uses this textbook as its primary reference. Students follow its progression step by step, implementing a simplified RISC-V processor in Verilog and simulating it with Verilator.
 
@@ -226,9 +216,9 @@ This restriction creates a practical barrier. The standard RISC-V GCC toolchain 
 
 As a result, students are limited to running hand-written assembly or small programs provided by the professor. They cannot compile and run arbitrary C code on the processor they designed and built. This prevents them from connecting the hardware they implement to the software abstractions they use daily, and forecloses the pedagogical opportunity of observing how a compiler translates and optimizes C code into the primitive instructions their processor supports.
 
-== Objetivo
-// - Apresentar o objetivo do trabalho de forma precisa e concisa.
-// - Deve responder `a pergunta: O que 'e o trabalho?
+== Objective
+// - Present the objective of the work in a precise and concise manner.
+// - Should answer the question: What is the work?
 
 This work develops eight progressive GCC compiler targets for the simplified RISC-V processors described in the Hennessy and Patterson textbook, enabling students of the PCS3225 course at USP to compile and run C programs on the processors they build in Verilog.
 
@@ -239,11 +229,11 @@ The specific objectives are:
 + Validate that each target emits only the mnemonics its corresponding processor supports.
 + Verify behavioral correctness of the generated code using the Spike RISC-V ISA simulator.
 
-== Justificativa
-// - Apresenta porque o trabalho desenvolvido 'e importante (import^ancia e necessidade para
-// a sociedade, compara,c~ao com trabalhos relevantes consultados etc.).
-// - Os trabalhos consultados devem estar citados e referenciados no texto.
-// - Deve responder `a pergunta: Por que o trabalho 'e importante?
+== Rationale
+// - Presents why the developed work is important (importance and necessity for society,
+// comparison with relevant consulted works, etc.).
+// - Consulted works must be cited and referenced in the text.
+// - Should answer the question: Why is the work important?
 
 The gap between restricted educational processors and real compiler toolchains is a known friction point in computer architecture education. Several tools and projects address parts of this problem but none address it fully. RARS (RISC-V Assembly and Runtime Simulator) #footnote[TODO: add @rars citation] provides an assembly-level environment for writing and running RISC-V programs but does not support C compilation. Academic projects such as Wildcat #footnote[TODO: add @wildcat2025 citation], BRISC-V #footnote[TODO: add @brisc2019 citation], and riscv-simple-sv implement pedagogical RISC-V processors in HDL, but all rely on the standard unmodified `riscv-gnu-toolchain`, which presupposes full RV32I support. None of them address the C compilation problem for processors with restricted instruction sets.
 
@@ -251,79 +241,79 @@ To the best of the authors' knowledge, no prior work creates restricted GCC back
 
 Beyond enabling C compilation, the generated assembly has direct educational value. Students can compile a C function, inspect the output with `-S`, and observe concretely how the compiler synthesizes a shift operation from repeated additions, or a signed comparison from subtraction and bit manipulation. This bridges the gap between the hardware they implement and the software abstractions they encounter in other courses.
 
-== Organiza,c~ao do Trabalho
+== Document Organization
 
 The remainder of this monograph is organized as follows. Chapter 2 presents the conceptual background, covering the GCC compilation framework, the RISC-V instruction set architecture, and the architecture of the Hennessy-Patterson educational processor. Chapter 3 describes the development method, including the specification, implementation, and testing phases followed for each target. Chapter 4 specifies the requirements for each of the eight targets, defining the allowed instruction sets and the synthesis obligations imposed on the compiler. Chapter 5 details the implementation, describing the instruction synthesis techniques developed inside the GCC machine description and the per-target configuration files. Chapter 6 presents the test results and discusses the validity and limitations of each target. Chapter 7 presents the conclusions, contributions, and directions for future work.
 
 
-= Aspectos Conceituais
-// - Define as seções representativas em função do trabalho.
-// - Apresenta os conceitos empregados e a revisão da literatura.
-// - Os trabalhos consultados devem estar citados e referenciados no texto.
-== gcc
-== risc-v
-== hannersy e patterson architecture
-- Tem um processador monociclo
-ULAa 100% funcional
-N tem unidade de controle, eh combinatoria para q alunos no 1st~2nd ano
-mas n suporta todas as intrucoes do isntruction set
+= Conceptual Background
+// - Defines the representative sections based on the work.
+// - Presents the concepts used and the literature review.
+// - Consulted works must be cited and referenced in the text.
+== GCC
+== RISC-V
+== Hennessy and Patterson Architecture
+- Has a single-cycle processor
+- Fully functional ALU
+- No control unit — combinational logic, suitable for 1st/2nd year students
+- Does not support the full instruction set
 
 
-= Especificação de Requisitos
-// Definir e descrever os requisitos do trabalho. O trabalho pode ser de desenvolvimento de
-// sistema, melhoria de um sistema existente, definição de processo, técnicas, procedimentos, ou
-// um outro tipo de trabalho acordado com o orientador.
+= Requirements Specification
+// Define and describe the requirements of the work. The work may involve system development,
+// improvement of an existing system, process definition, techniques, procedures, or
+// another type of work agreed upon with the advisor.
 
-O trabalho busca desenvolver simplificações no backend do gcc de forma a suportar implementações simplificadas de um processador RISC-V, de forma a permitir implementações intermediarias funcionais. Para isso foram definidos 6 processadores com targets especiais que geram apenas o conjunto de instruções por eles suportado.
+This work aims to develop simplifications in the GCC backend to support simplified implementations of a RISC-V processor, enabling intermediate functional implementations. To this end, six processors are defined with special targets that emit only the instruction set they support.
 
-== rvsc0 - Monociclo básico
-O rvsc0 é a implementação mais simples, um monociclo de 32 bits, com sua implementação descrita no Cap 4.4 do Hannersy e Patterson, A Simple Implementation Scheme
+== rvsc0 - Basic Single-Cycle
+The rvsc0 is the simplest implementation, a 32-bit single-cycle processor, described in Chapter 4.4 of Hennessy and Patterson, A Simple Implementation Scheme.
 
 
 #quote[In this section, we look at what might be thought of as a simple implementation of our RISC-V subset. [...] This simple implementation covers load word (lw), store word (sw), branch if equal (beq), and the arithmetic-logical instructions add, sub, and, and or.]
 
 
 // TODO: make it a table
-Conforme mencionado no texto essa implementação suporta apenas as instruções:
+As mentioned in the textbook, this implementation supports only the following instructions:
 - lw - load word
 - sw - store word
 - beq - branch if equal
-- add - aritimetic add
-- addi - arithmetic add with imediate
+- add - arithmetic add
+- addi - arithmetic add with immediate
 - sub - arithmetic subtraction
-- and - bitwese and
+- and - bitwise and
 - or - bitwise or
 
-Assim sendo o compilador deve ser capaz de gerar apenas essas instruções para esse processador.
+Therefore, the compiler must be capable of emitting only these instructions for this processor.
 
-=== Limitações
-Essa implementação não possui nenhuma interação com o PC, dessa forma não é possível adicionar suporte a subrotina recursivas, apenas static call. Nesse caso o compilador deve emitir um erro.
+=== Limitations
+This implementation has no interaction with the PC, so it is not possible to support recursive subroutines — only static calls. In this case, the compiler must emit an error.
 
-// é possivel "voltar" usando beq
-// talvez n devemos inline pois fica mais didatico de olhar o codigo
+// it is possible to "return" using beq
+// perhaps we should not inline, as it is more instructive to inspect the code
 
-=== Detalhes de implementação
-Na implementação utilizada pelos alunos o processador tem acesso a uma RAM de 2 ciclos de leitura e 5 ciclos de escrita, um barramento wishbone. O espaço de endereçamento é como segue:
+=== Implementation Details
+In the student implementation the processor has access to RAM with 2 read cycles and 5 write cycles over a Wishbone bus. The address space is as follows:
 - Boot: 0x200
-- RAM: final do endereçamento
-- Perifericos: 0xFC00000000
-	- registrador único para o led
+- RAM: end of address space
+- Peripherals: 0xFC00000000
+	- single register for the LED
 
 
-== rvsc1 - Monociclo extendido
+== rvsc1 - Extended Single-Cycle
 // TODO: check if lui is that much necessary
-O rvsc1 estende o rvsc0 com as instruções load upper immediate (lui) e Jump and Link Register (jalr), e desta forma remover a limitação de funções recursivas do processador anterior.
+The rvsc1 extends rvsc0 with load upper immediate (`lui`) and Jump and Link Register (`jalr`), thereby removing the recursive function limitation of the previous processor.
 
-Desta forma o instruction set completo do rvsc1 fica:
+The complete instruction set of rvsc1 is:
 // TODO: make a table
-- Herda do sc0: `lw`, `sw`, `beq`, `add`, `addi`, `sub`, `and`, `or`
-- `jalr` — retorno de função e chamadas indiretas
-- `lui` — carregamento de endereços absolutos (metade alta de 32 bits)
+- Inherited from sc0: `lw`, `sw`, `beq`, `add`, `addi`, `sub`, `and`, `or`
+- `jalr` — function return and indirect calls
+- `lui` — loading absolute addresses (upper 20 bits of a 32-bit value)
 
-== rvsc2 - Monociclo sem fence e controle
-O rvsc2 implementa todas as instruções do padrão rv32i exceto instruções de Memory Order, CSR Access e System. Por se tratar de um mono-ciclo single core as instruções de memory order podem ser retiradas sem perda de função /*rewrite*/, Da mesma forma as instruções de CSR e Systema foram retiradas por se tratar de intruções especificas do sistema operacional, sem uso para códigos simples bare metal.
+== rvsc2 - Single-Cycle Without Fence and Control
+The rvsc2 implements all rv32i instructions except Memory Order, CSR Access, and System instructions. Being a single-core single-cycle processor, memory ordering instructions can be removed without loss of functionality. Likewise, CSR and System instructions were removed as they are OS-specific and have no use in simple bare-metal code.
 
-Assim sendo a ISA deste processador é:
+The ISA of this processor is therefore:
 // TODO: make a table
 - add
 - addi
@@ -363,7 +353,7 @@ Assim sendo a ISA deste processador é:
 - xor
 - xori
 
-Com a excessao das seguintes instrucoes:
+With the exception of the following instructions:
 - Memory Order:
   - `fence`   - Instruction fence
   - `fence.i` - Fence
@@ -381,135 +371,135 @@ Com a excessao das seguintes instrucoes:
   - `SRET` - Supervisior Exception Return
   - `WFI` - Wait for Interrupt
 
-== rvsc3 - Monociclo rv32i
-O rvsc3 suporta todas as instruções do sc2 mais as instruções Memory Order, CSR Access e System, supportando assim o set inteiro do sc3.
+== rvsc3 - Single-Cycle rv32i
+The rvsc3 supports all sc2 instructions plus Memory Order, CSR Access, and System instructions, thus implementing the full rv32i instruction set.
 
-// TODO: 
-// explain NOPs em processadores pipeline e RISC-V
-// explain that we are generating this target to make easies to progress on that
+// TODO:
+// explain NOPs in pipeline processors and RISC-V
+// explain that we are generating this target to make it easier to progress from here
 
-== rvsc4 - Monociclo rvi64
-O sc4 é um monociclo de 64bits com o conjunto inteiro de instruções do rv64i.
+== rvsc4 - Single-Cycle rv64i
+The sc4 is a 64-bit single-cycle processor with the full rv64i instruction set.
 
-Além das instruções implementadas pelo sc3, ele conta com:
-- Memória 64 bits: `ld`, `sd`, `lwu`
-- Operações em word com resultado estendido a 64 bits (sufixo W): `addw`, `subw`, `addiw`, `sllw`, `srlw`, `sraw`, `slliw`, `srliw`, `sraiw`
+In addition to the sc3 instructions, it includes:
+- 64-bit memory operations: `ld`, `sd`, `lwu`
+- Word operations with sign-extended 64-bit results (W suffix): `addw`, `subw`, `addiw`, `sllw`, `srlw`, `sraw`, `slliw`, `srliw`, `sraiw`
 
-== rvsc5 - Monociclo rvi64 com multiplicação
-Suporta todas as instruções do sc4 mais a extensão M (multiplicação e divisão inteira):
+== rvsc5 - Single-Cycle rv64i with Multiply
+Supports all sc4 instructions plus the M extension (integer multiply and divide):
 
-- Multiplicação: `mul`, `mulw`, `mulh`, `mulhu`, `mulhsu`
-- Divisão assinada: `div`, `divw`
-- Divisão não-assinada: `divu`, `divuw`
-- Resto assinado: `rem`, `remw`
-- Resto não-assinado: `remu`, `remuw`
+- Multiply: `mul`, `mulw`, `mulh`, `mulhu`, `mulhsu`
+- Signed divide: `div`, `divw`
+- Unsigned divide: `divu`, `divuw`
+- Signed remainder: `rem`, `remw`
+- Unsigned remainder: `remu`, `remuw`
 
-As variantes com sufixo W operam em 32 bits e estendem o resultado a 64 bits por sinal, seguindo a mesma convenção de `addw`, `subw` e demais instruções W do sc4.
+The W-suffix variants operate on 32 bits and sign-extend the result to 64 bits, following the same convention as `addw`, `subw`, and the other W instructions from sc4.
 
-Suportando assim o isa rv32im.
+This implements the rv64im ISA.
 
-== rvsc6 - Monociclo float point
+== rvsc6 - Single-Cycle Floating-Point
 
-Suporta todas as instruções do sc5 mais as extensões F (single) e D (double) de ponto flutuante, conforme o green card do H&P.
+Supports all sc5 instructions plus the F (single-precision) and D (double-precision) floating-point extensions, as defined in the H&P green card.
 
 Loads/stores:
 - `flw`, `fsw` — single precision
 - `fld`, `fsd` — double precision
 
-Aritmética:
+Arithmetic:
 - `fadd.s`, `fadd.d`, `fsub.s`, `fsub.d`, `fmul.s`, `fmul.d`, `fdiv.s`, `fdiv.d`, `fsqrt.s`, `fsqrt.d`
 
-Multiply-add fusionado:
+Fused multiply-add:
 - `fmadd.s`, `fmadd.d`, `fmsub.s`, `fmsub.d`, `fnmadd.s`, `fnmadd.d`, `fnmsub.s`, `fnmsub.d`
 
-Sinal, mínimo e máximo:
+Sign, minimum, and maximum:
 - `fsgnj.s`, `fsgnj.d`, `fsgnjn.s`, `fsgnjn.d`, `fsgnjx.s`, `fsgnjx.d`
 - `fmin.s`, `fmin.d`, `fmax.s`, `fmax.d`
 
-Comparação e classificação:
+Comparison and classification:
 - `feq.s`, `feq.d`, `flt.s`, `flt.d`, `fle.s`, `fle.d`
 - `fclass.s`, `fclass.d`
 
-Move entre registradores inteiros e FP:
-- `fmv.w.x`, `fmv.x.w` — single (rv32 e rv64)
+Move between integer and FP registers:
+- `fmv.w.x`, `fmv.x.w` — single (rv32 and rv64)
 - `fmv.d.x`, `fmv.x.d` — double (rv64)
 
-Conversões (rv64):
+Conversions (rv64):
 - `fcvt.s.w`, `fcvt.s.wu`, `fcvt.s.l`, `fcvt.s.lu` — int → single
 - `fcvt.w.s`, `fcvt.wu.s`, `fcvt.l.s`, `fcvt.lu.s` — single → int
 - `fcvt.d.w`, `fcvt.d.wu`, `fcvt.d.l`, `fcvt.d.lu` — int → double
 - `fcvt.w.d`, `fcvt.wu.d`, `fcvt.l.d`, `fcvt.lu.d` — double → int
-- `fcvt.s.d`, `fcvt.d.s` — conversão entre single e double
+- `fcvt.s.d`, `fcvt.d.s` — conversion between single and double
 
-Eh importante notar que as extensoes FD foram revisadas e adicionadas novas operacoes, por motivos didaticos esse processador implementa apenas aquelas presentes no livro.
-// TODO: precisa de fontes e talvez citas quais foram as operacoes novas?
+It is important to note that the FD extensions have been revised and new operations have been added; for pedagogical reasons this processor implements only those present in the textbook.
+// TODO: needs sources and perhaps a citation for which operations are new
 
 
-== rvsc7 - Monociclo atômico
-Suporta todas as instruções do sc6 mais a extensão A (operações atômicas sobre memória), implementando o conjunto rv64imsfa.
-As variantes `.w` operam em 32 bits (sign-extend para 64); as variantes `.d` operam em 64 bits.
+== rvsc7 - Single-Cycle Atomic
+Supports all sc6 instructions plus the A extension (atomic memory operations), implementing the rv64imafd_zicsr instruction set.
+The `.w` variants operate on 32 bits (sign-extended to 64); the `.d` variants operate on 64 bits.
 
-Load-reserved e store-conditional:
+Load-reserved and store-conditional:
 - `lr.w`, `lr.d` — load-reserved
 - `sc.w`, `sc.d` — store-conditional
 
 AMO (atomic memory operations):
-- `amoadd.w`, `amoadd.d` — adição atômica
-- `amoand.w`, `amoand.d` — AND atômico
-- `amoor.w`, `amoor.d` — OR atômico
-- `amoxor.w`, `amoxor.d` — XOR atômico
-- `amoswap.w`, `amoswap.d` — swap atômico
-- `amomax.w`, `amomax.d` — máximo assinado atômico
-- `amomaxu.w`, `amomaxu.d` — máximo não-assinado atômico
-- `amomin.w`, `amomin.d` — mínimo assinado atômico
-- `amominu.w`, `amominu.d` — mínimo não-assinado atômico
+- `amoadd.w`, `amoadd.d` — atomic add
+- `amoand.w`, `amoand.d` — atomic AND
+- `amoor.w`, `amoor.d` — atomic OR
+- `amoxor.w`, `amoxor.d` — atomic XOR
+- `amoswap.w`, `amoswap.d` — atomic swap
+- `amomax.w`, `amomax.d` — atomic signed maximum
+- `amomaxu.w`, `amomaxu.d` — atomic unsigned maximum
+- `amomin.w`, `amomin.d` — atomic signed minimum
+- `amominu.w`, `amominu.d` — atomic unsigned minimum
 
-// TODO: checar se tem divergencia da ultima extensa para a implementada no livro
+// TODO: check for divergence between the latest extension spec and the version implemented in the textbook
 
-= Método de Trabalho
-// - Apresentar o processo de desenvolvimento do trabalho, através das suas fases (por
-// exemplo, especificação de requisitos, projeto, implementação, testes). As fases
-// dependem do tipo do sistema e devem ser definidas com o apoio do orientador.
-// - O desenvolvimento detalhado das fases e seus resultados devem estar descritos nos
-// capítulos seguintes e não no capítulo da Método de Trabalho.
-// - Os trabalhos consultados devem estar citados e referenciados no texto.
-- exploração e estudo do gcc
-- especificação de requisitos
-- implementacao
-- testes
-- analises e limitacoes
+= Development Method
+// - Present the development process of the work through its phases (e.g., requirements
+// specification, design, implementation, testing). The phases depend on the type of system
+// and should be defined with the advisor's guidance.
+// - The detailed development of the phases and their results should be described in the
+// subsequent chapters, not in this chapter.
+// - Consulted works must be cited and referenced in the text.
+- exploration and study of GCC
+- requirements specification
+- implementation
+- testing
+- analysis and limitations
 
-- emular todas as instrucoes
+- emulate all instructions
 
 = Desenvolvimento
 
-== Derivação de instruções
-Usando apenas as instruções de RVSC1 podemos realizar todo as funcionalidades necessárias para a linguagem C, a abordagem escolhida foi substituir a emissão da instrução suprimida quando possivel. Em casos em que não há uma substituição direta a alteração tem que ser feita /* descobrir como */.
-// TODO: discuss about use extra register and how this is applied and inpact 
+== Instruction Derivation
+Using only the RVSC1 instruction set, all functionality required by the C language can be achieved. The chosen approach was to replace the emission of an unsupported instruction with an equivalent sequence whenever possible. In cases where no direct substitution exists, the change must be made at a different level /* to be investigated */.
+// TODO: discuss about use extra register and how this is applied and impact
 
 
-=== Aritimeticas
+=== Arithmetic
 
-Operações aritméticas apenas atribuem valores para novos registradores, podendo ser totalmente substituídas por funções equivalentes.
+Arithmetic operations only assign values to new registers and can be fully replaced by equivalent sequences.
 
 ==== not (R[rd] = ~R[rs1])
 
-O `not` é implementado no risc-v como uma pseudo instrução, sendo implementado com `xor`, como o xor será mais custoso conforme visto na próxima sessão, buscou-se implementa-lo a partir da instrução `sub`.  
+The `not` instruction is implemented in RISC-V as a pseudo-instruction using `xor`. Since `xor` is more expensive, as shown in the next section, `not` is instead derived from the `sub` instruction.
 
-A arquitetura usa complemento de dois, assim sendo $-x = ~x + 1$, assim sendo podemos derivar a negação a partir da instrução de subtração implementada no nosso hardware com $~x = -x - 1$.
+The architecture uses two's complement, so $-x = ~x + 1$, meaning we can derive negation from subtraction as $~x = -x - 1$.
 
-Em assembly:
+In assembly:
 
 ```asm
 sub  rd, x0, rs1    # rd = -rs1
 addi rd, rd, -1     # rd = -rs1 - 1 = ~rs1
 ```
 
-Assim sendo a operação de negação leva duas instruções e usa o mesmo numero de registradores
+The negation operation therefore costs two instructions and uses the same number of registers.
 
 ==== xor (R[rd] = R[rs1] ^ R[rs2])
 
-A função `xor` as conjunctive normal form is
+The conjunctive normal form of `xor` is
 
 $a \^ b = (~a | ~b) & (a | b)$
 
@@ -577,7 +567,7 @@ So the instruction take $3 + 4*b$, where $b$ is the shift number, which in 32bit
 
 
 ==== srl (R[rd] = R[rs1] >> R[rs2])
-Para o shift left, a solução encontrada foi percorrer os bits e sobrencreve-los na nova posição usando bit manipulation. O código em C que implementa isso segue abaixo.
+For the logical right shift, the solution is to iterate over the bits and write each one to its new position using bit manipulation. The C implementation is shown below.
 
 ```c
 uint32_t srl(uint32_t x, uint32_t shift) {
@@ -596,8 +586,8 @@ uint32_t srl(uint32_t x, uint32_t shift) {
 }
 ```
 
-// shift = shift & 31u; is something related with C spec, needs to check and it's worth to mention.
-Em assembly usando apenas o conjunto de intrucoes temos:
+// shift = shift & 31u; is related to the C spec — worth verifying and mentioning.
+In assembly using only the available instruction set:
 
 ```asm
 # rd = rs1 >> rs2 (logical shift right)
@@ -736,10 +726,10 @@ beq  x0, x0, target
 skip:
 ```
 
-==== Bge - Branch greather than or equal
+==== Bge - Branch greater than or equal
 
 ```asm
-# com -mno-slt: sintetiza slt em t0, depois beq t0, x0, target
+# with -mno-slt: synthesize slt into t0, then beq t0, x0, target
 [slt t0, rs1, rs2]  # t0 = 1 if rs1 < rs2, else 0  (derived)
 beq  t0, x0, target
 ```
@@ -747,7 +737,7 @@ beq  t0, x0, target
 ==== Blt - Branch less than
 
 ```asm
-# com -mno-slt: sintetiza slt em t0, depois bne t0, x0, target
+# with -mno-slt: synthesize slt into t0, then bne t0, x0, target
 [slt t0, rs1, rs2]  # t0 = 1 if rs1 < rs2, else 0  (derived)
 bne  t0, x0, target
 ```
@@ -755,7 +745,7 @@ bne  t0, x0, target
 ==== Bgeu
 
 ```asm
-# com -mno-slt: sintetiza sltu em t0, depois beq t0, x0, target
+# with -mno-slt: synthesize sltu into t0, then beq t0, x0, target
 [sltu t0, rs1, rs2]  # t0 = 1 if rs1 < rs2 (unsigned), else 0  (derived)
 beq  t0, x0, target
 ```
@@ -763,14 +753,14 @@ beq  t0, x0, target
 ==== Bltu
 
 ```asm
-# com -mno-slt: sintetiza sltu em t0, depois bne t0, x0, target
+# with -mno-slt: synthesize sltu into t0, then bne t0, x0, target
 [sltu t0, rs1, rs2]  # t0 = 1 if rs1 < rs2 (unsigned), else 0  (derived)
 bne  t0, x0, target
 ```
 
-=== Imediate
+=== Immediate
 - (ORI, ANDI, SLLI, SRAI, SRLI, XORI, SLTI, SLTIU)
-Only uses ADDI to load a value to a temporary register and call non imediate operation
+Only uses ADDI to load a value into a temporary register and then call the non-immediate variant.
 
 ==== SLTI / SLTIU
 
@@ -828,54 +818,54 @@ This requires that `pool_entry` fits in a 12-bit signed offset from `x0` (addres
 
 ==== LB, LBU, LH, LHU <sc1-lb-synthesis>
 
-Como o processador suporta apenas `lw`, toda carga de byte ou meia-palavra é sintetizada em quatro etapas: alinhar o endereço à word, carregar a word, extrair a unidade alvo por deslocamento lógico à direita, e finalmente estender por sinal (`sra`) ou por zero (`srl`). Esse algoritmo é emitido em tempo de execução — não pressupõe que o offset seja constante em tempo de compilação.
+Since the processor only supports `lw`, every byte or halfword load is synthesized in four steps: align the address to a word boundary, load the word, extract the target unit by logical right shift, and finally sign-extend (`sra`) or zero-extend (`srl`). This algorithm is emitted at runtime — it does not assume the offset is constant at compile time.
 
 ```c
-/* Algoritmo comum a lb/lbu/lh/lhu */
-uint32_t aligned = addr & ~3u;          // word alinhada: addr & -4
+/* Common algorithm for lb/lbu/lh/lhu */
+uint32_t aligned = addr & ~3u;          // word-aligned: addr & -4
 uint32_t word    = lw(aligned);         // lw 0(aligned)
-uint32_t unit_off = addr & MASK;        // MASK = 3 para byte, 2 para meia-palavra
-uint32_t bit_off  = unit_off * 8;       // posição do bit menos significativo
-uint32_t shifted  = word >> bit_off;    // [srl] extrai a unidade para bits [N:0]
-// lbu/lhu: zero-extend via deslocamento simétrico
-uint32_t result   = (shifted << BITS) >> BITS;  // lógico: [srl]
-// lb/lh:  sign-extend via deslocamento aritmético
-int32_t  result   = (int32_t)(shifted << BITS) >> BITS;  // aritmético: [sra]
-// BITS = 24 para byte (QImode), 16 para meia-palavra (HImode)
+uint32_t unit_off = addr & MASK;        // MASK = 3 for byte, 2 for halfword
+uint32_t bit_off  = unit_off * 8;       // least-significant bit position
+uint32_t shifted  = word >> bit_off;    // [srl] extracts unit to bits [N:0]
+// lbu/lhu: zero-extend via symmetric shift
+uint32_t result   = (shifted << BITS) >> BITS;  // logical: [srl]
+// lb/lh:  sign-extend via arithmetic shift
+int32_t  result   = (int32_t)(shifted << BITS) >> BITS;  // arithmetic: [sra]
+// BITS = 24 for byte (QImode), 16 for halfword (HImode)
 ```
 
 ```asm
-# lb rd, 0(rs1)  (endereço em rs1, byte_pos desconhecido em compile-time)
+# lb rd, 0(rs1)  (address in rs1, byte_pos unknown at compile-time)
 addi  t0, x0, -4
-and   t0, rs1, t0         # t0 = rs1 & -4  (word alinhada)
-lw    t1, 0(t0)           # t1 = word contendo o byte
+and   t0, rs1, t0         # t0 = rs1 & -4  (word-aligned)
+lw    t1, 0(t0)           # t1 = word containing the byte
 addi  t0, x0, 3
-and   t0, rs1, t0         # t0 = rs1 & 3  (posição do byte: 0–3)
-[sll  t0, t0, 3]          # t0 = byte_pos * 8  (deslocamento em bits)
-[srl  t1, t1, t0]         # t1 >>= bit_off  (byte em bits [7:0])
-[sll  t1, t1, 24]         # t1 <<= 24  (byte em bits [31:24])
-[sra  rd,  t1, 24]        # rd >>= 24  (extensão por sinal → lb)
-                          # use [srl] no último passo para lbu (extensão por zero)
+and   t0, rs1, t0         # t0 = rs1 & 3  (byte position: 0–3)
+[sll  t0, t0, 3]          # t0 = byte_pos * 8  (bit offset)
+[srl  t1, t1, t0]         # t1 >>= bit_off  (byte in bits [7:0])
+[sll  t1, t1, 24]         # t1 <<= 24  (byte in bits [31:24])
+[sra  rd,  t1, 24]        # rd >>= 24  (sign-extend → lb)
+                          # use [srl] in the last step for lbu (zero-extend)
 
-# lh rd, 0(rs1)  — idêntico mas MASK = 2, BITS = 16
+# lh rd, 0(rs1)  — identical but MASK = 2, BITS = 16
 addi  t0, x0, -4
-and   t0, rs1, t0         # word alinhada
+and   t0, rs1, t0         # word-aligned
 lw    t1, 0(t0)
 addi  t0, x0, 2
-and   t0, rs1, t0         # t0 = rs1 & 2  (0 ou 2: qual meia-palavra)
-[sll  t0, t0, 3]          # t0 = half_pos * 8  (0 ou 16)
-[srl  t1, t1, t0]         # meia-palavra em bits [15:0]
+and   t0, rs1, t0         # t0 = rs1 & 2  (0 or 2: which halfword)
+[sll  t0, t0, 3]          # t0 = half_pos * 8  (0 or 16)
+[srl  t1, t1, t0]         # halfword in bits [15:0]
 [sll  t1, t1, 16]
-[sra  rd,  t1, 16]        # extensão por sinal → lh  (srl para lhu)
+[sra  rd,  t1, 16]        # sign-extend → lh  (srl for lhu)
 ```
 
-Como os shifts em sc1 são sintetizados via laços de `add`/`beq`, o custo total de uma carga de byte chega a ~70–80 instruções. O custo elevado é intencional: evidencia para os alunos o valor de ter `lb`/`lbu` como instruções nativas.
+Since shifts in sc1 are synthesized via `add`/`beq` loops, the total cost of a byte load reaches ~70–80 instructions. The high cost is intentional: it demonstrates to students the value of having `lb`/`lbu` as native instructions.
 
 === Store
 
 ==== SB
 
-Um store de byte é implementado como uma operação leitura-modificação-escrita (_read-modify-write_): carregar a word que contém o byte alvo, apagar os bits do byte, inserir o novo valor e guardar de volta. Como o ponteiro base é desconhecido em tempo de compilação, o deslocamento em bits é calculado em tempo de execução.
+A byte store is implemented as a read-modify-write operation: load the word containing the target byte, clear the byte's bits, insert the new value, and write back. Since the base pointer is unknown at compile time, the bit offset is computed at runtime.
 
 ```c
 void sb(uint8_t *addr, uint32_t rs2) {
@@ -891,37 +881,37 @@ void sb(uint8_t *addr, uint32_t rs2) {
 ```
 
 ```asm
-# sb rs2, 0(rs1)   — endereço em rs1, posição do byte desconhecida em compile-time
+# sb rs2, 0(rs1)   — address in rs1, byte position unknown at compile-time
 li    t0, -4
-and   t3, rs1, t0           # t3 = rs1 & -4  (word alinhada)
+and   t3, rs1, t0           # t3 = rs1 & -4  (word-aligned)
 li    t0, 3
 and   t0, rs1, t0           # t0 = rs1 & 3  (byte_pos: 0–3)
 add   t0, t0, t0            # \
-add   t0, t0, t0            #  t0 = byte_pos * 8  (shift em bits; sll sintetizado)
+add   t0, t0, t0            #  t0 = byte_pos * 8  (bit shift; synthesized sll)
 add   t0, t0, t0            # /
 lw    t1, 0(t3)             # t1 = old word
 li    t2, 255               # t2 = 0xFF
-[sll  t2, t2, t0]           # t2 = 0xFF << shift  (máscara; sll variável sintetizado)
-not   t2, t2                # t2 = ~máscara  (sintetizado)
-and   t1, t1, t2            # t1 = old_word & ~máscara  (apaga byte alvo)
+[sll  t2, t2, t0]           # t2 = 0xFF << shift  (mask; synthesized variable sll)
+not   t2, t2                # t2 = ~mask  (synthesized)
+and   t1, t1, t2            # t1 = old_word & ~mask  (clear target byte)
 li    t2, 255
-and   t2, rs2, t2           # t2 = rs2 & 0xFF  (isola byte de entrada)
-[sll  t2, t2, t0]           # t2 = byte_valor << shift  (posiciona; sll variável sintetizado)
-or    t1, t1, t2            # t1 = palavra com byte inserido
-sw    t1, 0(t3)             # armazena de volta
+and   t2, rs2, t2           # t2 = rs2 & 0xFF  (isolate input byte)
+[sll  t2, t2, t0]           # t2 = byte_value << shift  (position; synthesized variable sll)
+or    t1, t1, t2            # t1 = word with byte inserted
+sw    t1, 0(t3)             # write back
 ```
 
-Cada `sb` custa um `lw` (2 ciclos) mais um `sw` (5 ciclos) = 7 ciclos de memória, mais a sequência de síntese de shifts variáveis.
+Each `sb` costs one `lw` (2 cycles) plus one `sw` (5 cycles) = 7 memory cycles, plus the variable-shift synthesis sequence.
 
 ==== SH
 
-Mesmo padrão de leitura-modificação-escrita do `sb`, mas para meia-palavra de 16 bits. A posição da meia-palavra na word (`addr & 2`, que resulta em 0 ou 2) e o deslocamento em bits (0 ou 16) são calculados em tempo de execução. O valor 0xFFFF é materializado com `lui + addi` (excede o imediato de 12 bits).
+Same read-modify-write pattern as `sb`, but for a 16-bit halfword. The halfword position within the word (`addr & 2`, yielding 0 or 2) and the bit offset (0 or 16) are computed at runtime. The constant 0xFFFF is materialized with `lui + addi` (it exceeds the 12-bit immediate range).
 
 ```c
 void sh(uint16_t *addr, uint32_t rs2) {
     uint32_t aligned_addr = (uint32_t)addr & ~3u;    // addr & -4
-    uint32_t hw_pos       = (uint32_t)addr & 2u;     // runtime: 0 ou 2
-    uint32_t shift        = hw_pos * 8u;              // runtime: 0 ou 16
+    uint32_t hw_pos       = (uint32_t)addr & 2u;     // runtime: 0 or 2
+    uint32_t shift        = hw_pos * 8u;              // runtime: 0 or 16
     uint32_t old_word     = *(uint32_t *)aligned_addr;      // lw
     uint32_t hw_mask      = 0xFFFFu << shift;               // [sll] runtime shift
     uint32_t new_hw       = (rs2 & 0xFFFFu) << shift;       // [sll] runtime shift
@@ -931,27 +921,27 @@ void sh(uint16_t *addr, uint32_t rs2) {
 ```
 
 ```asm
-# sh rs2, 0(rs1)   — endereço em rs1, posição da meia-palavra desconhecida em compile-time
+# sh rs2, 0(rs1)   — address in rs1, halfword position unknown at compile-time
 li    t0, -4
-and   t3, rs1, t0           # t3 = rs1 & -4  (word alinhada)
+and   t3, rs1, t0           # t3 = rs1 & -4  (word-aligned)
 li    t0, 2
-and   t0, rs1, t0           # t0 = rs1 & 2  (hw_pos: 0 ou 2)
+and   t0, rs1, t0           # t0 = rs1 & 2  (hw_pos: 0 or 2)
 add   t0, t0, t0            # \
-add   t0, t0, t0            #  t0 = hw_pos * 8  (shift em bits: 0 ou 16; sll sintetizado)
+add   t0, t0, t0            #  t0 = hw_pos * 8  (bit shift: 0 or 16; synthesized sll)
 add   t0, t0, t0            # /
 lw    t1, 0(t3)             # t1 = old word
 li    t2, 65535             # t2 = 0xFFFF  (lui 0x10 + addi -1)
-[sll  t2, t2, t0]           # t2 = 0xFFFF << shift  (máscara; sll variável sintetizado)
-not   t2, t2                # t2 = ~máscara  (sintetizado)
-and   t1, t1, t2            # t1 = old_word & ~máscara  (apaga meia-palavra alvo)
+[sll  t2, t2, t0]           # t2 = 0xFFFF << shift  (mask; synthesized variable sll)
+not   t2, t2                # t2 = ~mask  (synthesized)
+and   t1, t1, t2            # t1 = old_word & ~mask  (clear target halfword)
 li    t2, 65535
-and   t2, rs2, t2           # t2 = rs2 & 0xFFFF  (isola meia-palavra de entrada)
-[sll  t2, t2, t0]           # t2 = hw_valor << shift  (posiciona; sll variável sintetizado)
-or    t1, t1, t2            # t1 = palavra com meia-palavra inserida
-sw    t1, 0(t3)             # armazena de volta
+and   t2, rs2, t2           # t2 = rs2 & 0xFFFF  (isolate input halfword)
+[sll  t2, t2, t0]           # t2 = hw_value << shift  (position; synthesized variable sll)
+or    t1, t1, t2            # t1 = word with halfword inserted
+sw    t1, 0(t3)             # write back
 ```
 
-Cada `sh` custa um `lw` (2 ciclos) mais um `sw` (5 ciclos) = 7 ciclos de memória, mais a sequência de síntese de shifts variáveis.
+Each `sh` costs one `lw` (2 cycles) plus one `sw` (5 cycles) = 7 memory cycles, plus the variable-shift synthesis sequence.
 
 === Jump
 
@@ -1029,32 +1019,32 @@ riscv32-unknown-elf-gcc program.c -o program \
 
 = Results
 
-== Testes
+== Tests
 
-=== Validating asm
+=== Validating ASM
 - generate only for
 
 
 
-=== Validating result
-- Stone risc-v (sem syscall)
-- RISC-v official test implementation
-- Qemu baremetal
-- rocket
-- so o sc0 a sc2
-- monociclo
-- so o sc0 e sc1
+=== Validating Result
+- Stone RISC-V (no syscall)
+- RISC-V official test implementation
+- QEMU baremetal
+- Rocket
+- only sc0 to sc2
+- single-cycle
+- only sc0 and sc1
 
-== Program size
+== Program Size
 
-== Program performance
-In instruction
-- Ciclo de instrucao ou ciclo de clock
-- Processador tem memoria que deixa mais lento
+== Program Performance
+In instructions
+- Instruction cycle or clock cycle
+- Processor has memory that slows it down
 
 == Discussion
-- Mostrar que o compilador n gera o asm que o target n supporta
-- E eh suficientemente amplo
+- Show that the compiler does not emit instructions unsupported by the target
+- And is sufficiently broad
 
 = Conclusion
 
@@ -1062,5 +1052,5 @@ In instruction
 
 #bibliography("refs.bib", style: "ieee")
 
-= Apendice
+= Appendix
 === Samples
