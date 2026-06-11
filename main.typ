@@ -304,7 +304,7 @@ Desta forma o instruction set completo do rvsc1 fica:
 - `jalr` — retorno de função e chamadas indiretas
 - `lui` — carregamento de endereços absolutos (metade alta de 32 bits)
 
-== rvsc2 - Monociclo sem fance e controle
+== rvsc2 - Monociclo sem fence e controle
 O rvsc2 implementa todas as instruções do padrão rv32i exceto instruções de Memory Order, CSR Access e System. Por se tratar de um mono-ciclo single core as instruções de memory order podem ser retiradas sem perda de função /*rewrite*/, Da mesma forma as instruções de CSR e Systema foram retiradas por se tratar de intruções especificas do sistema operacional, sem uso para códigos simples bare metal.
 
 Assim sendo a ISA deste processador é:
@@ -468,22 +468,41 @@ AMO (atomic memory operations):
 = Desenvolvimento
 
 == Derivação de instruções
-Buscando facilitar a implementação para os alunos o trabalho buscou reduzir o numero máximo de instruções.
+Usando apenas as instruções de RVSC1 podemos realizar todo as funcionalidades necessárias para a linguagem C, a abordagem escolhida foi substituir a emissão da instrução suprimida quando possivel. Em casos em que não há uma substituição direta a alteração tem que ser feita /* descobrir como */.
+// TODO: discuss about use extra register and how this is applied and inpact 
+
 
 === Aritimeticas
+
+Operações aritméticas apenas atribuem valores para novos registradores, podendo ser totalmente substituídas por funções equivalentes.
+
 ==== not (R[rd] = ~R[rs1])
 
-Since risc-v uses two's complement and $-x = ~x + 1$,
-we get $~x = -x - 1$.
+O `not` é implementado no risc-v como uma pseudo instrução, sendo implementado com `xor`, como o xor será mais custoso conforme visto na próxima sessão, buscou-se implementa-lo a partir da instrução `sub`.  
+
+A arquitetura usa complemento de dois, assim sendo $-x = ~x + 1$, assim sendo podemos derivar a negação a partir da instrução de subtração implementada no nosso hardware com $~x = -x - 1$.
+
+Em assembly:
 
 ```asm
 sub  rd, x0, rs1    # rd = -rs1
 addi rd, rd, -1     # rd = -rs1 - 1 = ~rs1
 ```
 
+Assim sendo a operação de negação leva duas instruções e usa o mesmo numero de registradores
+
 ==== xor (R[rd] = R[rs1] ^ R[rs2])
 
-Using D'morgan
+A função `xor` as conjunctive normal form is
+
+$a \^ b = (~a | ~b) & (a | b)$
+
+As not cost 2 instruction, we can reduce the number of not's using D'morgan in the first factor
+
+$a \^ b = ~(a & b) & (a | b)$
+
+Which can be expressed in assembly as
+
 
 ```asm
 and t0, rs1, rs2    # t0 = rs1 & rs2
@@ -491,6 +510,18 @@ not t0              # t0 = ~(rs1 & rs2)
 or  t2, rs1, rs2    # t2 = rs1 | rs2
 and rd, t0, t2      # rd = ~(rs1 & rs2) & (rs1 | rs2) = rs1 ^ rs2
 ```
+
+With the `not` replacement the real assembly output will be:
+
+```asm
+and t0, rs1, rs2    # t0 = rs1 & rs2
+sub  t0, x0, t0     # t0 = -(rs1 & rs2)
+addi t0, t0, -1     # t0 = ~(rs1 & rs2)
+or  rd, rs1, rs2    # t2 = rs1 | rs2
+and rd, t0, rd      # rd = ~(rs1 & rs2) & (rs1 | rs2) = rs1 ^ rs2
+```
+
+So the xor costs now 6 instructions and requires a extra register.
 
 ==== sll (R[rd] = R[rs1] << R[rs2])
 
@@ -509,6 +540,8 @@ The C implementation would be
   }
 ```
 
+And in assembly:
+
 ```asm
 # rd = rs1 << rs2
     add   t1, rs2, x0    # t1 = rs2 (save shift count before rd may alias rs2)
@@ -522,8 +555,13 @@ loop:
 done:
 ```
 
+So the instruction take $3 + 4*b$, where $b$ is the shift number, which in 32bits architecture can be at most 32, so the worst case here is 131 instructions.
+
+// TODO: talk about c, what happen if a << 33 in a 31 architecture. I think is UB, but need to check.
+
 
 ==== srl (R[rd] = R[rs1] >> R[rs2])
+Para o shift left, a solução encontrada foi percorrer os bits e sobrencreve-los na nova posição usando bit manipulation. O código em C que implementa isso segue abaixo.
 
 ```c
 uint32_t srl(uint32_t x, uint32_t shift) {
@@ -541,6 +579,9 @@ uint32_t srl(uint32_t x, uint32_t shift) {
     return result;
 }
 ```
+
+// shift = shift & 31u; is something related with C spec, needs to check and it's worth to mention.
+Em assembly usando apenas o conjunto de intrucoes temos:
 
 ```asm
 # rd = rs1 >> rs2 (logical shift right)
@@ -647,10 +688,6 @@ xor  t0, t0, t1     # corrected = diff ^ overflow     (derived; t1,t2 now free)
 [srl rd,  t0, 31]   # rd        = corrected >> 31     (derived)
 ```
 
-Implementado via flag `-mno-slt` (`TARGET_SLT = 0`) no expand `cstore<GPR:mode>4` de `riscv.md`.
-As variantes GE/GT/LE são reduzidas a LT com troca de operandos e/ou inversão (`1 - result`).
-O intercept em `@cbranch<mode>4` garante que os padrões de síntese de `blt`/`bge` em `*branch<mode>` nunca emitem `slt` como string de asm direta.
-
 ==== sltu
 
 ```c
@@ -673,8 +710,6 @@ or    t2, t2, t3     # borrow    = generated | propagated
 [srl  rd,  t2, 31]   # rd        = borrow >> 31       (derived)
 ```
 
-Implementado junto com `slt` pelo mesmo flag `-mno-slt`. A síntese do GCC expande
-`not` via `sub x0, rs; addi -1` e `xor` via De Morgan, produzindo apenas `sub`, `and`, `or`, `addi`.
 
 ==== Bne
 
@@ -723,8 +758,6 @@ Only uses ADDI to load a value to a temporary register and call non imediate ope
 
 ==== SLTI / SLTIU
 
-`slti rd, rs1, imm` and `sltiu rd, rs1, imm` compare a register against an integer literal.
-Synthesis (`-mno-slti`): load the immediate into a temporary register, then use the register form.
 
 ```asm
 li    t, imm          # load immediate into register
@@ -732,8 +765,6 @@ slt   rd, rs1, t      # slti rd, rs1, imm  →  slt rd, rs1, t
 sltu  rd, rs1, t      # sltiu rd, rs1, imm →  sltu rd, rs1, t
 ```
 
-This synthesis fires only when `TARGET_SLT && !TARGET_SLTI` (native `slt`/`sltu` available but not the immediate forms).
-When `!TARGET_SLT`, the immediate is handled automatically by the full sub/xor/and/lshr synthesis path via `force_reg`.
 
 === Load
 
@@ -939,278 +970,25 @@ double:
 ```
 
 
-=== Compilando o toolchain
-
-```sh
-../gcc/configure \
-    --target=rvsc1-unknown-elf \
-    --prefix=$(pwd)/install \
-    --enable-languages=c \
-    --with-newlib
-```
-
-=== Limitações
-
-Não implementa `auipc` nem `jal`: o processador não tem acesso ao PC para aritmética de endereço. Consequentemente:
-
-- Todo código deve ser carregado em endereço absoluto fixo (sem PIC).
-- Chamadas de função são feitas via `lui`+`jalr` (endereço absoluto) em vez do pseudo `call` (que gera `auipc`+`jalr`, relaxado pelo linker para `jal`).
-- Desvios incondicionais dentro de funções (laços, `if`/`else`) são sintetizados via `lui`+`jalr` em vez de `j label` (`jal x0, label`).
-- Referências a símbolos globais usam `lui`+`lo12` em vez de `auipc`+`lo12`.
-
-Não implementa cargas de byte ou meia-palavra (`lb`, `lbu`, `lh`, `lhu`): o hardware apenas suporta `lw` (word). O compilador sintetiza todas as quatro instruções via `lw` + alinhamento + extração de bits (ver @sc1-lb-synthesis).
-
-==== Risco: registrador temporário nos saltos absolutos
-
-A síntese `lui t1,%hi(L); jalr x0,t1,%lo(L)` consome um registrador temporário que, no caso normal (`j label`), não seria necessário. O compilador aloca esse registrador via a análise de pseudo-registradores do RTL, sem conflito com valores vivos — mas o código gerado é maior (8 bytes em vez de 4) e mais lento.
-
-==== Síntese de bne
-
-`bne a,b,L` é sintetizado via inversão da condição:
-
-```asm
-beq  a, b, skip
-lui  t1, %hi(L)
-addi t1, t1, %lo(L)
-jr   t1
-skip:
-```
-
-O custo é 16 bytes (4 instruções) contra 4 bytes de um `bne` nativo. O registrador `t1` é consumido como temporário, sem conflito com valores vivos.
-
-==== Síntese de sll constante
-
-`sll rd, rs, n` com deslocamento constante é sintetizado via `add` repetido — cada dobramento equivale a um deslocamento de um bit à esquerda:
-
-```asm
-; slli a0, a0, 3  (shift left by 3)
-add a0, a0, a0     ; a0 = a0 << 1
-add a0, a0, a0     ; a0 = a0 << 2
-add a0, a0, a0     ; a0 = a0 << 3
-```
-
-O custo é `n` instruções `add` para um deslocamento de `n` bits.
-
-==== Síntese de srl
-
-`srl rd, rs1, rs2` é sintetizado extraindo cada bit de `rs1` da posição `shift` em diante e colocando-o na posição correspondente do resultado. O algoritmo usa apenas `and`, `or`, `add` e `beq`:
-
-```c
-result = 0; out_mask = 1; in_mask = 1 << shift;
-while (in_mask != 0) {
-    if ((rs1 & in_mask) != 0) result |= out_mask;
-    out_mask <<= 1; in_mask <<= 1;
-}
-```
-
-O custo é (32 − shift) iterações de ~7 instruções. Para `srl` variável, adiciona-se um loop de `shift` iterações para calcular `in_mask = 1 << shift`.
-
-==== Síntese de sll variável
-
-`sll rd, rs1, rs2` com deslocamento variável é sintetizado via laço de decremento: o valor é dobrado (`add rd, rd, rd`) exatamente `rs2 & 31` vezes.
-
-```c
-uint32_t sll(uint32_t rs1, uint32_t rs2) {
-    uint32_t rd = rs1;
-    for (uint32_t i = rs2 & 31; i != 0; i--)
-        rd += rd;
-    return rd;
-}
-```
-
-```asm
-# rd = rs1 << rs2
-    andi  count, rs2, 31    # count = rs2 & 31
-    mv    rd, rs1
-    beq   count, x0, done
-loop:
-    add   rd, rd, rd        # rd <<= 1
-    addi  count, count, -1
-    beq   count, x0, done
-    beq   x0, x0, loop
-done:
-```
-
-O custo é até 31 iterações de ~5 instruções para shift máximo de 31 bits.
-
-==== Síntese de sra
-
-`sra rd, rs1, rs2` preserva o bit de sinal. A síntese executa primeiro `srl` e depois, se o bit 31 de `rs1` era 1, aplica extensão de sinal via OR de `sign_mask = 0xFFFFFFFF << (32 − shift)`.
-
-```c
-int32_t sra(int32_t rs1, uint32_t rs2) {
-    uint32_t shift = rs2 & 31;
-    uint32_t result = (uint32_t)srl((uint32_t)rs1, shift);
-    if (shift == 0 || (rs1 >> 31) == 0) return result;
-    uint32_t sign_mask = (uint32_t)(-1) << (32u - shift);
-    return result | sign_mask;
-}
-```
-
-Para deslocamento constante `n`, `sign_mask` é calculado em tempo de compilação:
-
-```asm
-; srai rd, rs1, 3  →  sign_mask = -1 << 29 = 0xE0000000
-    and   t6, rs1, 0x80000000   # salva bit de sinal
-    [srl  rd, rs1, 3]           # deslocamento lógico (síntese)
-    beq   t6, x0, done          # positivo: srl == sra
-    ori   rd, rd, 0xE0000000    # OR sign_mask
-done:
-```
-
-Para deslocamento variável, `sign_mask` é construído em tempo de execução via laço de deslocamento à esquerda de `-1`:
-
-```asm
-# sra rd, rs1, rs2
-    and   t6, rs1, 0x80000000   # bit de sinal (antes do srl)
-    [srl  rd, rs1, rs2]         # deslocamento lógico (síntese)
-    beq   t6, x0, done          # positivo: srl == sra
-    andi  shift, rs2, 31
-    beq   shift, x0, done       # shift==0 mod 32: sem extensão
-    neg   n, shift
-    addi  n, n, 32              # n = 32 - shift
-    li    sign_mask, -1         # 0xFFFFFFFF
-ext_sll:
-    add   sign_mask, sign_mask, sign_mask
-    addi  n, n, -1
-    beq   n, x0, apply
-    beq   x0, x0, ext_sll
-apply:
-    or    rd, rd, sign_mask
-done:
-```
-
-==== Síntese de not
-
-`not rd, rs1` (pseudo-instrução `xori rd, rs1, -1`) é sintetizada via negação aritmética seguida de decremento:
-
-```asm
-; not rd, rs1  →  ~x = -x - 1
-neg   rd, rs1    # rd = -rs1  (sub rd, x0, rs1)
-addi  rd, rd, -1 # rd = -rs1 - 1 = ~rs1
-```
-
-A identidade algébrica usada é `~x = −x − 1`, válida para inteiros em complemento de dois. O custo é 2 instruções (`sub` + `addi`), contra 1 instrução `xori` nativa.
-
-==== Síntese de xor
-
-`xor rd, rs1, rs2` é sintetizado via identidade de De Morgan: `a ^ b = ~(a & b) & (a | b)`. A negação intermediária é implementada com a síntese de `not` já definida:
-
-```asm
-; xor rd, rs1, rs2
-and   t0, rs1, rs2   # t0 = rs1 & rs2
-or    t1, rs1, rs2   # t1 = rs1 | rs2
-neg   t0, t0         # t0 = -(rs1 & rs2)
-addi  t0, t0, -1     # t0 = ~(rs1 & rs2)
-and   rd, t0, t1     # rd = ~(rs1&rs2) & (rs1|rs2) = rs1 ^ rs2
-```
-
-O custo é 5 instruções para operandos registro. Com `-mno-ori` ativo (sc1), `xori rd, rs1, imm` sintetiza `ori` como `li`+`or`, resultando em 6 instruções no total.
-
-==== Síntese de ori
-
-`ori rd, rs1, imm` é sintetizado carregando o imediato em um registrador temporário e usando `or` registro-registro:
-
-```asm
-; ori rd, rs1, imm
-li    t, imm         # t = imm  (addi t, x0, imm para pequenos; lui+addi para grandes)
-or    rd, rs1, t     # rd = rs1 | t
-```
-
-O custo é 2 instruções (`li` + `or`) contra 1 instrução `ori` nativa. Para evitar que o passe `combine` do GCC reinsira o imediato diretamente no padrão `or`, a alternativa imediata do `define_insn` é desabilitada via atributo `enabled` quando `!TARGET_ORI`.
-
-==== Síntese de andi
-
-`andi rd, rs1, imm` é sintetizado carregando o imediato em um registrador temporário e usando `and` registro-registro:
-
-```asm
-; andi rd, rs1, imm
-li    t, imm         # t = imm  (addi t, x0, imm para pequenos; lui+addi para grandes)
-and   rd, rs1, t     # rd = rs1 & t
-```
-
-O custo é 2 instruções (`li` + `and`) contra 1 instrução `andi` nativa. A alternativa imediata do `define_insn "*and<mode>3"` é desabilitada via atributo `enabled` quando `!TARGET_ANDI`, impedindo que o passe `combine` reinsira o imediato.
-
-Um caso especial é a instrução de zero-extension `andi rd, rs, 0xff`, emitida pelo padrão `*zero_extendqi<SUPERQI:mode>2_internal` para converter um byte em inteiro. Esse padrão tem alternativa própria (não passa pelo `and<mode>3` expand) e é tratado por um `define_insn_and_split "*zero_extendqisi2_noandi"` que toma prioridade sobre o padrão andi quando `!TARGET_ANDI`. Após reload, o split gera:
-
-```asm
-; (unsigned char) rs  →  rd = rs & 0xff
-li    rd, 255        # rd = 0xff  (reutiliza rd como temporário; early-clobber garante rd ≠ rs)
-and   rd, rs, rd     # rd = rs & 0xff
-```
-
-== Monociclo sem fance e controle - sc2
-Supporta todas as instruções do rv32i instruções de mem. ordering, csr acess e system
-
-Target: `rvsc2`
-
-Flags equivalentes: `-march=rv32i -mabi=ilp32 -mno-fence`
-
-Instruction:
-- add
-- addi
-- and
-- andi
-auipc
-beq
-bge
-bgeu
-blt
-bltu
-bne
-jal
-jalr
-lb
-lbu
-lh
-lhu
-lui
-lw
-or
-ori
-sb
-sh
-sll
-slli
-slt
-slti
-sltiu
-sltu
-sra
-srai
-srl
-srli
-sub
-sw
-xor
-xori
-
-except:
-- Memory Order:
-  - `fence`   - Instruction fence
-  - `fence.i` - Fence
-  - `sfence.vma` - Address Transalation Fence
-- CSR Access:
-  - `CSRRWI` - CSR Read/Write Immediate
-  - `CSRRSI` - CSR Read/Set Immediate
-  - `CSRRCI` - CSR Read/Clear Immediate
-  - `CSRRW`  - CSR Read/Write
-  - `CSRRS`  - CSR Read/Set
-  - `CSRRC`  - CSR Read/Clear
-- System:
-  - `ECALL` - Enviroemnt Call
-  - `EBREAK` - Enviroment Breakpoint
-  - `SRET` - Supervisior Exception Return
-  - `WFI` - Wait for Interrupt
 
 == Implementation
 
+=== GCC overfiev
+
+- GCC architecture
+- GCC backends and targets
+
 === GCC Machine Description Files
+
+- Explain what are machine description
+- Explain where is the changes
+- Give some examples
 
 === GCC flags and target configuration
 
-Each target (sc0–sc7) is exposed as a named GCC target triple of the form `rv-scN-unknown-elf`, allowing students to invoke the compiler without memorising flag combinations.
-For sc2 specifically, the corresponding triple is `rvsc2-unknown-elf`, and the compiler is invoked as:
+- List all flags create for each implementation
+- Show how this flags are configured
+
 
 ```sh
 rvsc2-unknown-elf-gcc program.c -o program
@@ -1233,57 +1011,6 @@ riscv32-unknown-elf-gcc program.c -o program \
     --enable-languages=c
 ```
 
-==== The `-mno-fence` option
-
-The standard rv32i base ISA includes three memory-ordering instructions (`fence`, `fence.i`, `sfence.vma`) and several CSR and system instructions that the educational processor hardware does not implement.
-A new boolean option `mfence` is added to `gcc/config/riscv/riscv.opt`:
-
-```
-mfence
-Target Var(TARGET_FENCE) Init(1)
-Enable fence instruction emission (-mno-fence suppresses all fence instructions).
-```
-
-`Init(1)` leaves fence enabled for all other RISC-V targets.
-`-mno-fence` sets `TARGET_FENCE` to 0.
-
-The only place in the RISC-V backend that emits fence RTL under ordinary C compilation is the `mem_thread_fence` pattern in `gcc/config/riscv/sync.md`.
-A single early-exit guard is added at the top of its body:
-
-```
-if (!TARGET_FENCE)
-  DONE;
-```
-
-When `TARGET_FENCE` is 0, the expand completes immediately without emitting any insn, making every `__atomic_thread_fence()` call a no-op at the RTL level.
-CSR access instructions (`csrrw`, `csrrs`, etc.) and system instructions (`ecall`, `ebreak`, etc.) are never emitted by GCC for standard C programs; no additional suppression is needed.
-
-==== Custom target triple
-
-Registering a separate triple (`rvsc2-unknown-elf`) rather than relying on runtime flags ensures:
-- Students cannot accidentally omit a required flag.
-- The default specs (linker script, start files, library paths) are already correct for the educational memory map.
-- Different sc targets can coexist in the same toolchain installation via multilib.
-
-Three changes to `gcc/config.gcc` wire up the new triple:
-
-+ The early cpu-type block is extended to recognise `rvsc2*` and set `cpu_type=riscv`, activating the RISC-V backend.
-+ A new OS block `rvsc2-*-elf*` sets `tm_file` to include `riscv/rvsc2.h` and reuses the standard `riscv/t-riscv` build rules.
-+ The target-defaults block is extended to match `rvsc2-*-*` triples, hardcode `xlen=32`, and pre-fill `with_arch=rv32i` and `with_abi=ilp32` when not overridden at configure time.
-
-`gcc/config/riscv/rvsc2.h` is the spec header for the new target.
-It inherits all ELF defaults from `riscv/elf.h` and adds a single `CC1_SPEC` override:
-
-```c
-#include "elf.h"
-
-#undef CC1_SPEC
-#define CC1_SPEC "%{!mfence:-mno-fence}"
-```
-
-`CC1_SPEC` is expanded by the GCC driver before invoking the compiler proper.
-The `%{!mfence:...}` condition injects `-mno-fence` unless the user explicitly passed `-mfence`, ensuring `TARGET_FENCE` is always 0 for this target by default.
-
 = Results
 
 == Testes
@@ -1291,469 +1018,7 @@ The `%{!mfence:...}` condition injects `-mno-fence` unless the user explicitly p
 === Validating asm
 - generate only for
 
-=== Ausência de NOPs em instruções de desvio
 
-Para garantir que o GCC não emite `nop` após instruções de desvio, o teste inspeciona o assembly gerado para um conjunto de funções com desvios condicionais e incondicionais.
-
-O script verifica que nenhuma instrução `nop` aparece imediatamente após qualquer desvio (`beq`, `bne`, `blt`, `bge`, `bltu`, `bgeu`, `jal`, `jalr`):
-
-```sh
-# Compila e gera assembly
-rvsc3-unknown-elf-gcc -S -O1 branch_test.c -o branch_test.s
-
-# Falha se qualquer nop seguir imediatamente um desvio
-awk '/^[[:space:]]*(beq|bne|blt|bge|bltu|bgeu|jal|jalr)/ { branch=1; next }
-     branch && /^[[:space:]]*nop/ { print "FAIL: nop after branch at line " NR; exit 1 }
-     { branch=0 }' branch_test.s
-```
-
-O teste cobre: `if/else`, `for`, `while`, `do-while`, chamadas de função e retornos.
-
-=== Ausência de auipc em sc1
-
-Para validar que o target sc1 não emite `auipc` — instrução não implementada no hardware — dois casos são testados: aritmética simples e chamada de função.
-
-==== Aritmética simples
-
-```c
-// test/sc1_add.c
-int add(int a, int b) { return a + b; }
-```
-
-```sh
-rvsc1-unknown-elf-gcc -S -O1 test/sc1_add.c -o sc1_add.s
-
-grep auipc sc1_add.s && echo FAIL || echo PASS
-```
-
-O assembly gerado contém apenas `addi`, `lw`, `sw` e `jr ra` — todos suportados pelo sc1.
-
-==== Chamada de função
-
-```c
-// test/sc1_call.c
-int foo(int x);
-int bar(int x) { return foo(x + 1); }
-```
-
-```sh
-rvsc1-unknown-elf-gcc -S -O1 test/sc1_call.c -o sc1_call.s
-
-grep auipc sc1_call.s && echo FAIL || echo PASS
-```
-
-O assembly gerado usa endereçamento absoluto via `lui`+`jalr` em vez do pseudo `call` (que o montador expandiria para `auipc`+`jalr`):
-
-```asm
-lui   a5,%hi(foo)
-addi  t1,a5,%lo(foo)
-jalr  t1
-```
-
-Como a sequência `lui`+`jalr` não corresponde ao padrão `auipc`+`jalr`, o linker não a relaxa para `jal`, garantindo que essa instrução também não seja emitida.
-
-=== Ausência de jal em sc1
-
-Para validar que o target sc1 não emite `jal` (desvio incondicional PC-relativo) em laços ou caminhos de controle:
-
-```c
-// test/sc1_loop.c
-int sum(int n) {
-    int s = 0;
-    for (int i = 0; i < n; i++) s += i;
-    return s;
-}
-```
-
-```sh
-rvsc1-unknown-elf-gcc -S -O1 test/sc1_loop.c -o sc1_loop.s
-
-grep -E '^\s+(j|jal)\b' sc1_loop.s && echo FAIL || echo PASS
-```
-
-O assembly gerado usa `lui`+`addi`+`jr` para saltos incondicionais em vez de `j label`:
-
-```asm
-lui   t1,%hi(.L2)
-addi  t1,t1,%lo(.L2)
-jr    t1
-```
-
-=== Ausência de bne em sc1
-
-Para validar que o target sc1 não emite `bne` nativa em desvios condicionais:
-
-```c
-// test/sc1_branch.c
-int neq(int a, int b) {
-    if (a != b) return 1;
-    return 0;
-}
-```
-
-```sh
-rvsc1-unknown-elf-gcc -S -O0 test/sc1_branch.c -o sc1_branch.s
-
-grep -E '^\s+bne\b' sc1_branch.s && echo FAIL || echo PASS
-```
-
-O assembly gerado usa `beq`+`lui`+`addi`+`jr` em vez de `bne`:
-
-```asm
-beq  a4,a5,.L2
-li   a5,1
-lui  t1,%hi(.L3)
-addi t1,t1,%lo(.L3)
-jr   t1
-.L2:
-```
-
-=== Síntese de sll em sc1
-
-Para validar que o target sc1 não emite `sll`/`slli` mas usa `add` para deslocamentos constantes:
-
-```c
-// test/sc1_shift.c
-int shift3(int x) { return x << 3; }
-```
-
-```sh
-rvsc1-unknown-elf-gcc -S -O1 test/sc1_shift.c -o sc1_shift.s
-
-grep -E '^\s+sll' sc1_shift.s && echo FAIL || echo PASS
-```
-
-O assembly gerado usa três `add` em vez de `slli`:
-
-```asm
-add a0, a0, a0
-add a0, a0, a0
-add a0, a0, a0
-```
-
-=== Síntese de srl em sc1
-
-Para validar que o target sc1 não emite `srl`/`srli` mas usa o loop de extração de bits:
-
-```c
-// test/sc1_srl.c
-unsigned shr3(unsigned x) { return x >> 3; }
-```
-
-```sh
-rvsc1-unknown-elf-gcc -S -O1 test/sc1_srl.c -o sc1_srl.s
-
-grep -E '^\s+srl' sc1_srl.s && echo FAIL || echo PASS
-```
-
-O assembly gerado usa `and`, `or`, `add` e `beq` em vez de `srli`:
-
-```asm
-li   a5,8       # in_mask = 1 << 3
-li   a3,1       # out_mask = 1
-li   a0,0       # result = 0
-.L2:
-beq  a5,zero,.L4
-and  a2,a4,a5
-beq  a2,zero,.L3
-or   a0,a0,a3
-.L3:
-add  a3,a3,a3
-add  a5,a5,a5
-...
-```
-
-=== Síntese de sll variável em sc1
-
-Para validar que o target sc1 não emite `sll` para deslocamentos com operando variável:
-
-```c
-// test/sc1_sll_var.c
-int sll_var(int x, int n) { return x << n; }
-```
-
-```sh
-rvsc1-unknown-elf-gcc -S -O1 test/sc1_sll_var.c -o sc1_sll_var.s
-
-grep -E '^\s+sll' sc1_sll_var.s && echo FAIL || echo PASS
-```
-
-O assembly gerado usa `li`+`and`+`add`+`beq` em vez de `sll` (com `andi` também sintetizado):
-
-```asm
-li    a5,31
-and   a1,a1,a5     # andi sintetizado: a1 &= 31
-beq   a1,zero,.Ldone
-.Lloop:
-    add   a0,a0,a0
-    addi  a1,a1,-1
-    beq   a1,zero,.Ldone
-    ...
-.Ldone:
-```
-
-=== Síntese de sra em sc1
-
-Para validar que o target sc1 não emite `sra`/`srai` mas usa `srl` seguido de extensão de sinal:
-
-```c
-// test/sc1_sra.c
-int sra3(int x) { return x >> 3; }         // constante
-int sra_var(int x, int n) { return x >> n; } // variável
-```
-
-```sh
-rvsc1-unknown-elf-gcc -S -O1 test/sc1_sra.c -o sc1_sra.s
-
-grep -E '^\s+sra' sc1_sra.s && echo FAIL || echo PASS
-```
-
-Para `sra3`, o assembly gerado usa a síntese de `srl` seguida de OR com a constante `0xE0000000` (`-1 << 29`):
-
-```asm
-li    a4,-2147483648   # 0x80000000: máscara do bit de sinal
-and   a3,a0,a4         # a3 = bit de sinal
-li    a0,0             # result = 0
-li    a2,1             # out_mask = 1
-li    a4,8             # in_mask = 1 << 3
-.L2:                   # loop srl
-    beq   a4,zero,.L4
-    and   a1,a5,a4
-    beq   a1,zero,.L3
-    or    a0,a0,a2
-.L3:
-    add   a2,a2,a2
-    add   a4,a4,a4
-    ...
-.L4:
-    beq   a3,zero,.L5  # positivo: srl == sra
-    li    a5,-536870912 # 0xE0000000 = -1 << 29
-    or    a0,a0,a5     # extensão de sinal
-.L5:
-```
-
-=== Síntese de not em sc1
-
-Para validar que o target sc1 não emite `not`/`xori` mas usa `neg` + `addi`:
-
-```c
-// test/sc1_not.c
-int f(int x) { return ~x; }
-```
-
-```sh
-rvsc1-unknown-elf-gcc -S -O1 test/sc1_not.c -o sc1_not.s
-
-grep -E '^\s+(not|xori)\b' sc1_not.s && echo FAIL || echo PASS
-```
-
-O assembly gerado usa `neg` (`sub a0,x0,a0`) e `addi` em vez de `xori`:
-
-```asm
-neg   a0, a0     # a0 = -a0
-addi  a0, a0, -1 # a0 = ~a0
-```
-
-=== Síntese de xor em sc1
-
-Para validar que o target sc1 não emite `xor`/`xori` mas usa a síntese via De Morgan:
-
-```c
-// test/sc1_xor.c
-int xor_reg(int a, int b) { return a ^ b; }
-int xor_imm(int a)         { return a ^ 5; }
-```
-
-```sh
-rvsc1-unknown-elf-gcc -S -O1 test/sc1_xor.c -o sc1_xor.s
-
-grep -E '^\s+(xor|xori)\b' sc1_xor.s && echo FAIL || echo PASS
-```
-
-Para `xor_reg`, o assembly gerado usa a sequência `and`/`or`/`neg`/`addi`/`and`:
-
-```asm
-and   a5, a0, a1   # a5 = a & b
-or    a0, a0, a1   # a0 = a | b
-neg   a5, a5       # a5 = -(a & b)
-addi  a5, a5, -1   # a5 = ~(a & b)
-and   a0, a5, a0   # a0 = ~(a&b) & (a|b) = a ^ b
-```
-
-Para `xor_imm` com constante 5, tanto `andi` quanto `ori` são sintetizados (pois `-mno-andi` e `-mno-ori` estão ativos). O compilador carrega o imediato uma única vez num temporário e reutiliza-o para ambos:
-
-```asm
-li    a4, 5        # a4 = 5
-and   a5, a0, a4   # a5 = a & 5  (andi sintetizado)
-or    a0, a0, a4   # a0 = a | 5  (ori sintetizado)
-neg   a5, a5       # a5 = -(a & 5)
-addi  a5, a5, -1   # a5 = ~(a & 5)
-and   a0, a5, a0   # a0 = ~(a&5) & (a|5) = a ^ 5
-```
-
-=== Síntese de andi em sc1
-
-Para validar que o target sc1 não emite `andi` mas usa `li`+`and`:
-
-```c
-// test/sc1_andi.c
-int andi_test(int a) { return a & 5; }
-int and_reg(int a, int b) { return a & b; }
-```
-
-```sh
-rvsc1-unknown-elf-gcc -S -O1 test/sc1_andi.c -o sc1_andi.s
-
-grep -E '^\s+andi\b' sc1_andi.s && echo FAIL || echo PASS
-```
-
-`andi_test` usa `li`+`and` em vez de `andi`; `and_reg` mantém `and` nativo:
-
-```asm
-; andi_test
-li    a5, 5        # a5 = 5
-and   a0, a0, a5   # a0 = a & 5
-
-; and_reg
-and   a0, a0, a1   # a0 = a & b  (inalterado)
-```
-
-=== Síntese de ori em sc1
-
-Para validar que o target sc1 não emite `ori` mas usa `li`+`or`:
-
-```c
-// test/sc1_ori.c
-int ori_test(int a) { return a | 5; }
-int or_reg(int a, int b) { return a | b; }
-```
-
-```sh
-rvsc1-unknown-elf-gcc -S -O1 test/sc1_ori.c -o sc1_ori.s
-
-grep -E '^\s+ori\b' sc1_ori.s && echo FAIL || echo PASS
-```
-
-`ori_test` usa `li`+`or` em vez de `ori`; `or_reg` mantém `or` nativo:
-
-```asm
-; ori_test
-li    a5, 5        # a5 = 5
-or    a0, a0, a5   # a0 = a | 5
-
-; or_reg
-or    a0, a0, a1   # a0 = a | b  (inalterado)
-```
-
-=== Síntese de lb/lbu/lh/lhu em sc1
-
-Para validar que o target sc1 não emite `lb`, `lbu`, `lh` ou `lhu` — instruções não implementadas no hardware — quatro testes verificam que cada carga de byte ou meia-palavra é substituída por uma sequência baseada em `lw`:
-
-```c
-// test/sc1_lbu.c
-int test_lbu(unsigned char *p) { return *p; }
-
-// test/sc1_lb.c
-int test_lb(char *p) { return *p; }
-
-// test/sc1_lhu.c
-int test_lhu(unsigned short *p) { return *p; }
-
-// test/sc1_lh.c
-int test_lh(short *p) { return *p; }
-```
-
-```sh
-for insn in lbu lb lhu lh; do
-  rvsc1-unknown-elf-gcc -S -O1 test/sc1_${insn}.c -o - \
-    | grep -E "^\s+${insn}\b" && echo FAIL || echo PASS
-done
-```
-
-O assembly gerado para `test_lbu` começa com o alinhamento do endereço e a carga da word:
-
-```asm
-li    a5, -4
-and   a5, a0, a5          # a5 = addr & -4  (word alinhada)
-lw    a1, 0(a5)           # a1 = word contendo o byte
-li    a5, 3
-and   a0, a0, a5          # a0 = addr & 3  (posição do byte)
-add   a0, a0, a0          # \
-add   a0, a0, a0          #  sll a0, a0, 3  (posição em bits)
-add   a0, a0, a0          # /
-# ... srl loop (extrai byte) ...
-# ... sll/srl 24 (zero-extends byte) ...
-```
-
-Nenhum dos quatro casos emite as instruções proibidas; todos passam nos testes de síntese.
-
-=== Síntese de sb/sh em sc1
-
-Para validar que o target sc1 não emite `sb` nem `sh` — instruções não implementadas no hardware — dois testes verificam que cada store de byte ou meia-palavra é substituído por uma sequência de leitura-modificação-escrita baseada em `lw`+`sw`:
-
-```c
-// test/sc1_sb.c
-void test_sb(char *p, int v) { *p = v; }
-void test_sb_offset(char *p, int v) { p[2] = v; }
-
-// test/sc1_sh.c
-void test_sh(short *p, int v) { *p = v; }
-void test_sh_offset(short *p, int v) { p[1] = v; }
-```
-
-```sh
-for insn in sb sh; do
-  rvsc1-unknown-elf-gcc -S -O1 test/sc1_${insn}.c -o - \
-    | grep -E "^\s+${insn}\b" && echo FAIL || echo PASS
-done
-```
-
-O assembly gerado para `test_sb` usa apenas instruções sc1 — note o padrão leitura-modificação-escrita com shifts variáveis sintetizados:
-
-```asm
-li    a5, -4
-and   a3, a0, a5          # a3 = addr & -4  (word alinhada)
-li    a5, 3
-and   a0, a0, a5          # a0 = addr & 3  (byte_pos)
-add   a0, a0, a0          # \
-add   a0, a0, a0          #  a0 = byte_pos * 8  (sll constante sintetizado)
-add   a0, a0, a0          # /
-lw    a4, 0(a3)           # a4 = old word
-li    a5, 255
-[sll  a5, a5, a0]         # máscara = 0xFF << shift  (sll variável sintetizado)
-not   a5, a5              # ~máscara
-and   a4, a4, a5          # apaga byte alvo
-li    a5, 255
-and   a5, a1, a5          # isola byte de entrada
-[sll  a5, a5, a0]         # posiciona valor
-or    a4, a4, a5          # insere byte
-sw    a4, 0(a3)           # armazena de volta
-```
-
-Nenhum dos dois casos emite `sb` ou `sh`; ambos passam nos testes de síntese.
-
-=== Ausência de fence em sc2
-
-Para validar que o target sc2 suprime corretamente a instrução `fence`, o teste compila `test/fence.c` e inspeciona o assembly gerado para a função `barrier`.
-
-```c
-#include <stdatomic.h>
-atomic_int x;
-void barrier(void) { atomic_thread_fence(memory_order_seq_cst); }
-int load(void)     { return atomic_load(&x); }
-void store(int v)  { atomic_store(&x, v); }
-```
-
-O script verifica que nenhuma instrução `fence` é emitida pelo compilador:
-
-```sh
-rvsc2-unknown-elf-gcc -S -O1 test/fence.c -o fence.s
-
-# Falha se qualquer fence aparecer no assembly (excluindo comentários)
-grep -v '^\s*#' fence.s | grep -w 'fence' && echo FAIL || echo PASS
-```
-
-Com `TARGET_FENCE = 0`, o padrão `mem_thread_fence` em `sync.md` executa `DONE` imediatamente sem emitir nenhuma instrução, de modo que `barrier` se reduz a um retorno vazio.
 
 === Validating result
 - Stone risc-v (sem syscall)
