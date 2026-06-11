@@ -210,34 +210,50 @@ This is the english abstract.
 #set page(numbering: "1")
 
 
-= Introdução
-// Contexto
-- O livro de arquitetura de computadores do Hannersy e Paterson é usado amplamente em cursos de graduação, no brasil e mundo a fora
-- O livro contem uma implementação simplificada do rv32i com caráter educativo
+= Introdu,c~ao
 
-== Motivação
-// - Apresenta o estado de arte resumido do assunto que será o tema do desenvolvimento
+== Motiva,c~ao
+// - Apresenta o estado de arte resumido do assunto que ser'a o tema do desenvolvimento
 // do trabalho, elaborado com base nos trabalhos consultados.
 // - Os trabalhos consultados devem estar citados e referenciados no texto.
-// - Apresenta o contexto em que o trabalho será desenvolvido.
-- Os alunos não conseguem rodar codigo C no seu processador, isso limita a sua execução a programas simples que são gerados manualmente pelos alunos
-- Existe a oportunidade de introduzi-los ao compilador enquando eles veem parte do artefato gerado
-- Eles tambem podem rodar programas reais e complexos
+// - Apresenta o contexto em que o trabalho ser'a desenvolvido.
+
+_Computer Organization and Design: RISC-V Edition_ by Patterson and Hennessy @patterson2020 is one of the most widely adopted references in undergraduate computer architecture courses worldwide. At the University of S~ao Paulo's Escola Polit'ecnica, the course PCS3225 --- Digital Systems 2 --- uses this textbook as its primary reference. Students follow its progression step by step, implementing a simplified RISC-V processor in Verilog and simulating it with Verilator.
+
+The simplified single-cycle processor introduced in Chapter 4.4 of the book --- _A Simple Implementation Scheme_ --- supports only eight instructions: `lw`, `sw`, `beq`, `add`, `addi`, `sub`, `and`, and `or`. This restriction is deliberate and pedagogically motivated: it isolates the essential datapath and control concepts before more complex features are introduced. A subsequent homework assignment extends the processor with `lui` and `jalr`, enabling function calls. Both implementations are partial subsets of the RV32I base ISA @riscv-spec.
+
+This restriction creates a practical barrier. The standard RISC-V GCC toolchain (`riscv32-unknown-elf-gcc`) targets the full RV32I base ISA @riscv-spec, which includes shift instructions, byte and halfword memory operations, multiple branch variants, and PC-relative addressing. Any C program compiled with this toolchain will emit instructions that the student-built processor cannot execute.
+
+As a result, students are limited to running hand-written assembly or small programs provided by the professor. They cannot compile and run arbitrary C code on the processor they designed and built. This prevents them from connecting the hardware they implement to the software abstractions they use daily, and forecloses the pedagogical opportunity of observing how a compiler translates and optimizes C code into the primitive instructions their processor supports.
 
 == Objetivo
 // - Apresentar o objetivo do trabalho de forma precisa e concisa.
-// - Deve responder à pergunta: O que é o trabalho?
-O trabalho tem como objetivo o desenvolvimento de targets para o GCC.
-Os targets foram projetados de maneira progressiva, partindo da implementação mais simples contida no livro e permitindo a complementação da implementação e aumentando o desempenho do programa.
+// - Deve responder `a pergunta: O que 'e o trabalho?
+
+This work develops eight progressive GCC compiler targets for the simplified RISC-V processors described in the Hennessy and Patterson textbook, enabling students of the PCS3225 course at USP to compile and run C programs on the processors they build in Verilog.
+
+The specific objectives are:
+
++ Define eight GCC target triples (`rvsc0` through `rvsc7`), each corresponding to a stage in the incremental processor implementation described in the textbook.
++ Implement instruction synthesis in the GCC machine description so that each operation unsupported by a given target is transparently replaced by an equivalent sequence of supported instructions.
++ Validate that each target emits only the mnemonics its corresponding processor supports.
++ Verify behavioral correctness of the generated code using the Spike RISC-V ISA simulator.
 
 == Justificativa
-// - Apresenta porque o trabalho desenvolvido é importante (importância e necessidade para
-// a sociedade, comparação com trabalhos relevantes consultados etc.).
+// - Apresenta porque o trabalho desenvolvido 'e importante (import^ancia e necessidade para
+// a sociedade, compara,c~ao com trabalhos relevantes consultados etc.).
 // - Os trabalhos consultados devem estar citados e referenciados no texto.
-// - Deve responder à pergunta: Por que o trabalho é importante?
-Atualmente a unica forma de rodar programas no processador do livro é escrevendo seu proprio assembly (devido ao limite de instrucoes).
-Esse trabalho busca permitir aos alunos rodarem qualquer programa C em seu proprio processador, dimindo o gap entre o que foi aprendido e programas do mundo real
-Bem como permite a introdução do uso de compiladores, escrevendo código C, printando o assembly e observando na pratica as traducoes e otimizacoes realizadas
+// - Deve responder `a pergunta: Por que o trabalho 'e importante?
+
+The gap between restricted educational processors and real compiler toolchains is a known friction point in computer architecture education. Several tools and projects address parts of this problem but none address it fully. RARS (RISC-V Assembly and Runtime Simulator) #footnote[TODO: add @rars citation] provides an assembly-level environment for writing and running RISC-V programs but does not support C compilation. Academic projects such as Wildcat #footnote[TODO: add @wildcat2025 citation], BRISC-V #footnote[TODO: add @brisc2019 citation], and riscv-simple-sv implement pedagogical RISC-V processors in HDL, but all rely on the standard unmodified `riscv-gnu-toolchain`, which presupposes full RV32I support. None of them address the C compilation problem for processors with restricted instruction sets.
+
+To the best of the authors' knowledge, no prior work creates restricted GCC backends for pedagogical RISC-V subsets. The approach taken here --- modifying the GCC RISC-V backend's `riscv.md` expand bodies to synthesize missing instructions from available ones @gcc-internals --- is novel in the context of pedagogical toolchains. It allows a standard C program to be compiled correctly for a processor with, for example, no shift instructions, no `bne`, and no PC-relative addressing, by transparently emitting equivalent sequences of the primitive operations the hardware does support.
+
+Beyond enabling C compilation, the generated assembly has direct educational value. Students can compile a C function, inspect the output with `-S`, and observe concretely how the compiler synthesizes a shift operation from repeated additions, or a signed comparison from subtraction and bit manipulation. This bridges the gap between the hardware they implement and the software abstractions they encounter in other courses.
+
+== Organiza,c~ao do Trabalho
+
+The remainder of this monograph is organized as follows. Chapter 2 presents the conceptual background, covering the GCC compilation framework, the RISC-V instruction set architecture, and the architecture of the Hennessy-Patterson educational processor. Chapter 3 describes the development method, including the specification, implementation, and testing phases followed for each target. Chapter 4 specifies the requirements for each of the eight targets, defining the allowed instruction sets and the synthesis obligations imposed on the compiler. Chapter 5 details the implementation, describing the instruction synthesis techniques developed inside the GCC machine description and the per-target configuration files. Chapter 6 presents the test results and discusses the validity and limitations of each target. Chapter 7 presents the conclusions, contributions, and directions for future work.
 
 
 = Aspectos Conceituais
