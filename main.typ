@@ -347,16 +347,24 @@ The rvsc0 is the simplest implementation, a 32-bit single-cycle processor, descr
 #quote[In this section, we look at what might be thought of as a simple implementation of our RISC-V subset. [...] This simple implementation covers load word (lw), store word (sw), branch if equal (beq), and the arithmetic-logical instructions add, sub, and, and or.]
 
 
-// TODO: make it a table
 As mentioned in the textbook, this implementation supports only the following instructions:
-- lw - load word
-- sw - store word
-- beq - branch if equal
-- add - arithmetic add
-- addi - arithmetic add with immediate
-- sub - arithmetic subtraction
-- and - bitwise and
-- or - bitwise or
+
+#figure(
+  table(
+    columns: (auto, 1fr),
+    align: left,
+    [*Mnemonic*], [*Description*],
+    [`lw`],   [Load word],
+    [`sw`],   [Store word],
+    [`beq`],  [Branch if equal],
+    [`add`],  [Add],
+    [`addi`], [Add immediate],
+    [`sub`],  [Subtract],
+    [`and`],  [Bitwise AND],
+    [`or`],   [Bitwise OR],
+  ),
+  caption: [rvsc0 instruction set],
+)
 
 Therefore, the compiler must be capable of emitting only these instructions for this processor.
 
