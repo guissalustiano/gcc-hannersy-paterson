@@ -251,25 +251,79 @@ The remainder of this monograph is organized as follows. Chapter 2 presents the 
 // - Defines the representative sections based on the work.
 // - Presents the concepts used and the literature review.
 // - Consulted works must be cited and referenced in the text.
+
 == RISC-V
-// - Design philosophy (reduced, load-store, fixed-width encoding)
-// - Base integer ISA (RV32I/RV64I): instruction formats (R/I/S/B/U/J), register file, pseudo-instructions
-// - Extensions: M (multiply), F/D (floating point), A (atomics), Zicsr
-// - The pedagogical subset from Patterson & Hennessy Ch. 4.4 and how it relates to the full spec
-== Single-Cycle processor arcuitecture
-// - Datapath and control for the 8-instruction subset
-// - How lui/jalr enable function calls (motivation for rvsc1)
-// - Why fence/CSR/system instructions are irrelevant on a bare-metal single-core
-== C Calling convention and ABI
-// - Register roles (a0–a7, ra, sp, t0–t6)
-// - Stack frame layout, function call/return sequence
-// - Why jalr is the minimum for full C ABI support (the rvsc0→rvsc1 boundary)
-// - ELF output format basics
-== GCC Compiler architecture
-// - Compilation pipeline: frontend → GIMPLE → RTL → backend
-// - What the backend does: instruction selection, register allocation, scheduling
-// - Machine description (.md) files: define_insn, define_expand, RTL patterns
-// - The role of riscv.opt flags and CC1_SPEC in target configuration
+
+RISC-V is an open, royalty-free instruction set architecture belonging to the Reduced Instruction Set Computer (RISC) family @riscv-spec. RISC architectures favour a small number of simple, orthogonal instructions over a large set of complex ones: all computation operates on registers, memory is accessed exclusively through explicit load and store instructions, and instructions are fixed-width, which keeps decoding logic simple and regular. The name RISC-V denotes the fifth major RISC ISA developed at UC Berkeley. Unlike earlier RISC designs, RISC-V is fully open: anyone may implement it without a license. The ISA is organized as a small mandatory base plus a set of optional standard extensions, so implementors include only the features their application requires.
+
+RISC-V uses six encoding formats --- R, I, S, B, U, and J --- chosen to minimise the number of distinct immediate-field positions a decoder must handle @riscv-spec.
+
+The base integer ISA has 32 general-purpose registers, x0--x31. x0 is hardwired to the constant zero and reads as zero regardless of writes. The remaining registers are general-purpose; the ABI assigns mnemonic names: a0--a7 for function arguments and return values, ra for the return address, sp for the stack pointer, t0--t6 for caller-saved temporaries, and s0--s11 for callee-saved registers @riscv-spec.
+
+The RV32I base ISA contains approximately 40 instructions organised into functional groups: integer arithmetic and logic (ADD, SUB, AND, OR, XOR, SLL, SRL, SRA and their immediate-operand forms ADDI, ANDI, ORI, XORI, SLLI, SRLI, SRAI); loads and stores (LW, LH, LB and unsigned halfword/byte variants LHU, LBU; SW, SH, SB); conditional branches (BEQ, BNE, BLT, BGE, BLTU, BGEU); jumps (JAL and JALR); upper-immediate instructions (LUI and AUIPC); and environment/system instructions (ECALL, EBREAK, FENCE) @riscv-spec.
+
+Beyond the base, RISC-V defines several standard extensions. The M extension adds integer multiply and divide (MUL, MULH, DIV, REM and variants). The A extension provides atomic memory operations (load-reserved/store-conditional pairs LR/SC and a family of AMO instructions). The F and D extensions add single- and double-precision IEEE 754 floating-point. The Zicsr extension provides access to control and status registers. The compound shorthand "G" denotes IMAFD\_Zicsr, the general-purpose profile @riscv-spec.
+
+== Single-Cycle Processor Architecture
+
+A single-cycle processor completes every instruction in exactly one clock cycle. The datapath consists of five principal components wired in sequence: an instruction memory that outputs the instruction at the current program counter (PC); a register file with two read ports and one write port; an arithmetic logic unit (ALU) that performs the operation selected by the control unit; a data memory for load and store operations; and a set of multiplexers that route operands and results under control of the control signals derived from the instruction opcode @patterson2020.
+
+The control unit decodes the instruction's opcode field and drives the multiplexer select lines and the register file write-enable. For a given instruction set, each instruction class has a fixed set of control signals; the datapath itself does not change between instructions --- only the routing of values through the multiplexers changes. This regularity is what makes it tractable to add support for a new instruction: each addition requires extending the decode logic and, where necessary, adding a new datapath path or multiplexer input.
+
+The critical path --- the longest combinational path from instruction memory output to the final register or memory write --- determines the maximum clock frequency. Because every instruction must complete within one cycle, the clock period is set by the slowest instruction. For an RV32I processor the critical path typically runs through instruction memory, the register file read ports, the ALU, data memory (for `lw`), and the register file write port.
+
+== Hennessy-Patterson Educational Processor
+
+_Computer Organization and Design: RISC-V Edition_ @patterson2020 uses a series of progressively more capable processor implementations to teach the relationship between instruction sets and hardware. Chapter 4.4, titled _A Simple Implementation Scheme_, introduces a single-cycle datapath that supports only eight instructions: `lw`, `sw`, `beq`, `add`, `addi`, `sub`, `and`, and `or`. This restriction is deliberate: with only eight instructions, the complete datapath and control unit fit on a single diagram and can be fully understood and implemented within a single lab exercise.
+
+The datapath for this subset is purpose-built. There is an ALU path for R-type arithmetic (`add`, `sub`, `and`, `or`) and I-type arithmetic (`addi`); a memory path for `lw` and `sw`; and a branch comparator for `beq`. The processor has no hardware for PC-relative address computation (no AUIPC path), no mechanism to load a 20-bit upper immediate into a register (no LUI path), and no register-to-PC write path that also captures the return address (no JALR path). Executing any instruction outside the supported set produces undefined results.
+
+== C Calling Convention and ABI
+
+An Application Binary Interface (ABI) is the binary-level contract that allows separately compiled translation units to interoperate. It specifies which registers hold function arguments, which the caller must preserve across a call, which the callee must preserve, how the stack is laid out, and how values are returned. Code compiled by different compilers for the same ABI can be linked and executed together.
+
+The RISC-V integer ABI partitions the 32 registers into four groups @riscv-psabi. Argument and return-value registers (a0--a7, i.e. x10--x17) pass the first eight integer arguments to a function and carry the return value back in a0 (and a1 for 64-bit values on RV32). Caller-saved temporaries (t0--t6, i.e. x5--x7 and x28--x31) may be freely overwritten by any callee; the caller must save them if their values are needed after a call. Callee-saved registers (s0--s11, i.e. x8--x9 and x18--x27) must be preserved across calls; a callee that uses them must save and restore them. Special-purpose registers are: ra (x1) the return address, sp (x2) the stack pointer, gp (x3) the global pointer, and tp (x4) the thread pointer.
+
+#figure(
+  table(
+    columns: (auto, auto, auto, auto),
+    align: left,
+    [*Register*], [*ABI name*], [*Role*], [*Saved by*],
+    [x0], [zero], [Hardwired zero], [---],
+    [x1], [ra], [Return address], [Caller],
+    [x2], [sp], [Stack pointer], [Callee],
+    [x3], [gp], [Global pointer], [---],
+    [x4], [tp], [Thread pointer], [---],
+    [x5--x7], [t0--t2], [Temporaries], [Caller],
+    [x8--x9], [s0--s1], [Saved registers], [Callee],
+    [x10--x11], [a0--a1], [Args / return value], [Caller],
+    [x12--x17], [a2--a7], [Arguments], [Caller],
+    [x18--x27], [s2--s11], [Saved registers], [Callee],
+    [x28--x31], [t3--t6], [Temporaries], [Caller],
+  ),
+  caption: [RISC-V integer register conventions @riscv-psabi],
+)
+
+The RISC-V stack grows downward. A typical stack frame contains, from high to low address: incoming arguments that did not fit in a0--a7, the saved return address, saved callee-saved registers, and local variables. The call sequence is: the caller loads arguments into a0--a7 (and pushes any extras onto the stack), then executes `jal ra, target` to jump to the callee and record the return address in ra. The callee saves ra and any s registers it uses, executes its body, places the result in a0, restores saved registers, and returns with `jalr x0, 0(ra)` (the `ret` pseudo-instruction). The stack pointer must be 16-byte aligned at every function entry and exit @riscv-psabi.
+
+GCC emits ELF (Executable and Linkable Format) object files. The principal sections are `.text` (machine code), `.rodata` (read-only constants and string literals), `.data` (initialized global variables), and `.bss` (zero-initialized global variables). Relocation entries in the object file record every reference to a symbol whose address is not yet known; the linker fills these in when it combines object files. A linker script controls the memory layout: it assigns each section to an address range that matches the target processor's address map @riscv-psabi.
+
+== GCC Compiler Architecture
+
+The GNU Compiler Collection (GCC) is a portable, multi-language, multi-target compiler and the dominant toolchain for embedded and systems software @gcc-internals. It translates C (and other languages) to machine code through a sequence of intermediate representations that progressively lower the abstraction level.
+
+The compilation pipeline proceeds as follows @gcc-internals. The language frontend parses source code and produces an abstract syntax tree (AST). The AST is lowered to GIMPLE, a high-level, language-independent, statement-level intermediate representation in static single-assignment (SSA) form. The middle-end applies target-independent optimisations to GIMPLE (constant folding, inlining, loop transformations, and others). GIMPLE is then lowered to RTL (Register Transfer Language), a low-level IR that models instructions as operations on pseudo-registers and memory. The backend operates on RTL to produce assembly.
+
+The backend performs three main tasks @gcc-internals. Instruction selection pattern-matches RTL expressions against the target's machine description to select real instructions. Register allocation assigns the potentially unbounded set of pseudo-registers to the finite set of physical registers, inserting spill code where necessary. Instruction scheduling reorders instructions to hide latency and avoid data hazards; this step is less significant for simple in-order single-cycle processors.
+
+The core of a GCC backend is the machine description file (`.md`), which declaratively specifies the target's instruction set and expansion rules @gcc-internals. It contains two primary construct types:
+
+- `define_insn` --- specifies a named RTL pattern, an assembly output template, and a predicate condition string. When the condition evaluates to false (e.g., `TARGET_SHIFT` is 0), the pattern is invisible to the instruction selector and will never be emitted.
+- `define_expand` --- specifies a named operation that expands into an arbitrary sequence of RTL insns when the compiler needs to generate that operation. The expansion body may call `DONE` to signal that it has produced the complete implementation, preventing any fallthrough to a `define_insn`. Expansions are the mechanism used to synthesize complex operations from simpler ones.
+
+Code iterators (such as `any_shift`) allow a single `define_expand` to cover multiple related operations (ASHIFT, LSHIFTRT, ASHIFTRT) in one body, with runtime-constant guards like `(<CODE>) == ASHIFT` selecting the appropriate synthesis path.
+
+Target-specific command-line options are declared in a `.opt` file using GCC's option-description syntax @gcc-internals. Each declaration generates a C preprocessor macro (e.g., `TARGET_SHIFT`) that can be tested in `.md` condition strings and in C target-hook implementations. A per-target header file defines `CC1_SPEC`, a GCC macro that is evaluated when the driver invokes the compiler proper (`cc1`). It contains conditional option-injection rules such as `%{!mshift:-mno-shift}`, which reads: "if the user did not explicitly pass `-mshift`, inject `-mno-shift`." This mechanism makes a target self-configuring: users invoke `rvsc1-unknown-elf-gcc` without any manual `-mno-*` flags, and the correct synthesis behaviour is activated automatically.
 
 
 = Requirements Specification
