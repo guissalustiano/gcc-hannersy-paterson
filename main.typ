@@ -243,6 +243,7 @@ Furthermore, students interact with GCC — the dominant open-source compiler fo
 
 == Document Organization
 
+// TODO: review this after document is finished
 The remainder of this monograph is organized as follows. Chapter 2 presents the conceptual background, covering the GCC compilation framework, the RISC-V instruction set architecture, and the architecture of the Hennessy-Patterson educational processor. Chapter 3 describes the development method, including the specification, implementation, and testing phases followed for each target. Chapter 4 specifies the requirements for each of the eight targets, defining the allowed instruction sets and the synthesis obligations imposed on the compiler. Chapter 5 details the implementation, describing the instruction synthesis techniques developed inside the GCC machine description and the per-target configuration files. Chapter 6 presents the test results and discusses the validity and limitations of each target. Chapter 7 presents the conclusions, contributions, and directions for future work.
 
 
@@ -250,13 +251,25 @@ The remainder of this monograph is organized as follows. Chapter 2 presents the 
 // - Defines the representative sections based on the work.
 // - Presents the concepts used and the literature review.
 // - Consulted works must be cited and referenced in the text.
-== GCC
 == RISC-V
-== Hennessy and Patterson Architecture
-- Has a single-cycle processor
-- Fully functional ALU
-- No control unit — combinational logic, suitable for 1st/2nd year students
-- Does not support the full instruction set
+// - Design philosophy (reduced, load-store, fixed-width encoding)
+// - Base integer ISA (RV32I/RV64I): instruction formats (R/I/S/B/U/J), register file, pseudo-instructions
+// - Extensions: M (multiply), F/D (floating point), A (atomics), Zicsr
+// - The pedagogical subset from Patterson & Hennessy Ch. 4.4 and how it relates to the full spec
+== Single-Cycle processor arcuitecture
+// - Datapath and control for the 8-instruction subset
+// - How lui/jalr enable function calls (motivation for rvsc1)
+// - Why fence/CSR/system instructions are irrelevant on a bare-metal single-core
+== C Calling convention and ABI
+// - Register roles (a0–a7, ra, sp, t0–t6)
+// - Stack frame layout, function call/return sequence
+// - Why jalr is the minimum for full C ABI support (the rvsc0→rvsc1 boundary)
+// - ELF output format basics
+== GCC Compiler architecture
+// - Compilation pipeline: frontend → GIMPLE → RTL → backend
+// - What the backend does: instruction selection, register allocation, scheduling
+// - Machine description (.md) files: define_insn, define_expand, RTL patterns
+// - The role of riscv.opt flags and CC1_SPEC in target configuration
 
 
 = Requirements Specification
