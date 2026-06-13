@@ -333,6 +333,13 @@ Target-specific command-line options are declared in a `.opt` file using GCC's o
 
 This work aims to develop simplifications in the GCC backend to support simplified implementations of a RISC-V processor, enabling intermediate functional implementations. To this end, six processors are defined with special targets that emit only the instruction set they support.
 
+== Target Platform
+All targets run on the same student hardware implementation. The processor has access to RAM with 2 read cycles and 5 write cycles over a Wishbone bus. The address space is as follows:
+- Boot: 0x200
+- RAM: end of address space
+- Peripherals: 0xFC00000000
+  - single register for the LED
+
 == rvsc0 - Basic Single-Cycle
 The rvsc0 is the simplest implementation, a 32-bit single-cycle processor, described in Chapter 4.4 of Hennessy and Patterson, A Simple Implementation Scheme.
 
@@ -358,14 +365,6 @@ This implementation has no interaction with the PC, so it is not possible to sup
 
 // it is possible to "return" using beq
 // perhaps we should not inline, as it is more instructive to inspect the code
-
-=== Implementation Details
-In the student implementation the processor has access to RAM with 2 read cycles and 5 write cycles over a Wishbone bus. The address space is as follows:
-- Boot: 0x200
-- RAM: end of address space
-- Peripherals: 0xFC00000000
-	- single register for the LED
-
 
 == rvsc1 - Extended Single-Cycle
 // TODO: check if lui is that much necessary
