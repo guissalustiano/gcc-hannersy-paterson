@@ -1,4 +1,4 @@
-Interview me relentlessly about every aspect of this tesis until we reach a shared understanding. Walk down each branch of the problem, specification and solution, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
+Read the full @main.typ, interview me relentlessly about every aspect of this tesis until we reach a shared understanding. Walk down each branch of the problem, specification and solution, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
 
 Ask the questions one at a time.
 
