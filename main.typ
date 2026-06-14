@@ -331,23 +331,52 @@ Target-specific command-line options are declared in a `.opt` file using GCC's o
 // improvement of an existing system, process definition, techniques, procedures, or
 // another type of work agreed upon with the advisor.
 
-This work aims to develop simplifications in the GCC backend to support simplified implementations of a RISC-V processor, enabling intermediate functional implementations. To this end, six processors are defined with special targets that emit only the instruction set they support.
+This chapter defines the requirements for the eight GCC cross-compiler targets developed in this work. Each target is a modified GCC backend that accepts bare-metal freestanding C programs and produces machine code containing only the instructions supported by the corresponding educational processor.
 
-== Target Platform
-All targets run on the same student hardware implementation. The processor has access to RAM with 2 read cycles and 5 write cycles over a Wishbone bus. The address space is as follows:
-- Boot: 0x200
-- RAM: end of address space
-- Peripherals: 0xFC00000000
-  - single register for the LED
+== Scope
 
-== rvsc0 - Basic Single-Cycle
-The rvsc0 is the simplest implementation, a 32-bit single-cycle processor, described in Chapter 4.4 of Hennessy and Patterson, A Simple Implementation Scheme.
+All targets compile *bare-metal freestanding C*: programs with no standard library, no operating system, and no dynamic memory allocation. This matches the execution environment of the student-built processors, which run standalone on FPGA hardware with direct access to memory-mapped peripherals.
 
+Each target compiles C source to an ELF binary. The ELF is used directly for functional validation on the Spike RISC-V ISA simulator. A flat binary suitable for loading into the student's Verilog simulation is then extracted from the ELF using `objcopy`.
+
+== Correctness Requirements
+
+Two independent correctness requirements apply to every target.
+
+*ISA compliance*: the compiler must never emit an instruction whose opcode is not in the target's allowed set. This requirement is verifiable by inspecting the assembly output.
+
+*Behavioral equivalence*: the compiled program must exhibit the same observable behavior as the source — the same return values, the same memory effects, and the same control flow — as if compiled for a processor that natively supports the full instruction set.
+
+=== Instruction Treatment Taxonomy
+
+When a target does not natively support an instruction that the compiler would otherwise emit, one of the following treatments applies:
+
+#figure(
+  table(
+    columns: (auto, 1fr, auto),
+    align: left,
+    [*Treatment*], [*Meaning*], [*Example*],
+    [*Native*],
+      [Hardware supports it; compiler emits it directly.],
+      [`add`, `lw` in rvsc0],
+    [*Synthesized*],
+      [Replaced by an equivalent instruction sequence; the destination register receives the same value as the native instruction would produce.],
+      [`xor` via De Morgan in rvsc0/rvsc1],
+    [*Behaviorally equivalent*],
+      [C-level behavior is preserved but the mechanism changes; no value-identical claim at the instruction level. Includes both mechanism replacements and instructions whose omission is behavior-preserving on single-core bare-metal.],
+      [`jal` → `lui+jalr`; `auipc` → absolute `lui+lo12`; `fence` omitted on single-core],
+    [*Rejected*],
+      [Architecturally impossible on the target; C constructs that require the instruction result in a compiler error.],
+      [`ecall`, CSR access on all targets; `jalr` on rvsc0],
+  ),
+  caption: [Instruction treatment taxonomy],
+)
+
+== rvsc0 — Basic Single-Cycle
+
+The rvsc0 target corresponds to the eight-instruction single-cycle processor described in Chapter 4.4 of @patterson2020, _A Simple Implementation Scheme_:
 
 #quote[In this section, we look at what might be thought of as a simple implementation of our RISC-V subset. [...] This simple implementation covers load word (lw), store word (sw), branch if equal (beq), and the arithmetic-logical instructions add, sub, and, and or.]
-
-
-As mentioned in the textbook, this implementation supports only the following instructions:
 
 #figure(
   table(
@@ -363,104 +392,113 @@ As mentioned in the textbook, this implementation supports only the following in
     [`and`],  [Bitwise AND],
     [`or`],   [Bitwise OR],
   ),
-  caption: [rvsc0 instruction set],
+  caption: [rvsc0 native instruction set],
 )
 
-Therefore, the compiler must be capable of emitting only these instructions for this processor.
+#figure(
+  table(
+    columns: (auto, 1fr),
+    align: left,
+    [*Treatment*], [*Instructions*],
+    [Synthesized],
+      [`not`, `xor`, `xori`, `ori`, `andi`, `sll`, `srl`, `sra`, `slli`, `srli`, `srai`, `slt`, `sltu`, `slti`, `sltiu`, `bne`, `blt`, `bge`, `bltu`, `bgeu`, `lui`, `lb`, `lbu`, `lh`, `lhu`, `sb`, `sh`],
+    [Behaviorally equivalent],
+      [`fence`, `fence.i`, `sfence.vma`],
+    [Rejected],
+      [`jal`, `jalr`, `auipc`, `ecall`, `ebreak`, `sret`, `wfi`, CSR instructions (`csrrw`, `csrrs`, `csrrc`, `csrrwi`, `csrrsi`, `csrrci`)],
+  ),
+  caption: [rvsc0 instruction treatment],
+)
 
 === Limitations
-This implementation has no interaction with the PC, so it is not possible to support recursive subroutines — only static calls. In this case, the compiler must emit an error.
 
-// it is possible to "return" using beq
-// perhaps we should not inline, as it is more instructive to inspect the code
+The rvsc0 processor has no mechanism to write the program counter — it supports neither `jalr` nor any jump-and-link instruction. As a consequence, subroutine calls are architecturally impossible. The scope of C programs that can nonetheless be compiled for rvsc0 is explored in the Development chapter.
 
-== rvsc1 - Extended Single-Cycle
-// TODO: check if lui is that much necessary
-The rvsc1 extends rvsc0 with load upper immediate (`lui`) and Jump and Link Register (`jalr`), thereby removing the recursive function limitation of the previous processor.
+== rvsc1 — Extended Single-Cycle
 
-The complete instruction set of rvsc1 is:
-// TODO: make a table
-- Inherited from sc0: `lw`, `sw`, `beq`, `add`, `addi`, `sub`, `and`, `or`
-- `jalr` — function return and indirect calls
-- `lui` — loading absolute addresses (upper 20 bits of a 32-bit value)
+The rvsc1 target extends rvsc0 with `lui` and `jalr`. These two instructions are the minimum addition that enables the full C calling convention: `lui` materializes 32-bit absolute addresses and `jalr` performs indirect jumps and encodes function returns via `jalr x0, 0(ra)`.
 
-== rvsc2 - Single-Cycle Without Fence and Control
-The rvsc2 implements all rv32i instructions except Memory Order, CSR Access, and System instructions. Being a single-core single-cycle processor, memory ordering instructions can be removed without loss of functionality. Likewise, CSR and System instructions were removed as they are OS-specific and have no use in simple bare-metal code.
+#figure(
+  table(
+    columns: (auto, 1fr),
+    align: left,
+    [*Mnemonic*], [*Description*],
+    [`lw`],   [Load word],
+    [`sw`],   [Store word],
+    [`beq`],  [Branch if equal],
+    [`add`],  [Add],
+    [`addi`], [Add immediate],
+    [`sub`],  [Subtract],
+    [`and`],  [Bitwise AND],
+    [`or`],   [Bitwise OR],
+    [`lui`],  [Load upper immediate],
+    [`jalr`], [Jump and link register],
+  ),
+  caption: [rvsc1 native instruction set],
+)
 
-The ISA of this processor is therefore:
-// TODO: make a table
-- add
-- addi
-- and
-- andi
-- auipc
-- beq
-- bge
-- bgeu
-- blt
-- bltu
-- bne
-- jal
-- jalr
-- lb
-- lbu
-- lh
-- lhu
-- lui
-- lw
-- or
-- ori
-- sb
-- sh
-- sll
-- slli
-- slt
-- slti
-- sltiu
-- sltu
-- sra
-- srai
-- srl
-- srli
-- sub
-- sw
-- xor
-- xori
+#figure(
+  table(
+    columns: (auto, 1fr),
+    align: left,
+    [*Treatment*], [*Instructions*],
+    [Synthesized],
+      [`not`, `xor`, `xori`, `ori`, `andi`, `sll`, `srl`, `sra`, `slli`, `srli`, `srai`, `slt`, `sltu`, `slti`, `sltiu`, `bne`, `blt`, `bge`, `bltu`, `bgeu`, `lb`, `lbu`, `lh`, `lhu`, `sb`, `sh`],
+    [Behaviorally equivalent],
+      [`jal`, `auipc`, `fence`, `fence.i`, `sfence.vma`],
+    [Rejected],
+      [`ecall`, `ebreak`, `sret`, `wfi`, CSR instructions (`csrrw`, `csrrs`, `csrrc`, `csrrwi`, `csrrsi`, `csrrci`)],
+  ),
+  caption: [rvsc1 instruction treatment],
+)
 
-With the exception of the following instructions:
-- Memory Order:
-  - `fence`   - Instruction fence
-  - `fence.i` - Fence
-  - `sfence.vma` - Address Transalation Fence
-- CSR Access:
-  - `CSRRWI` - CSR Read/Write Immediate
-  - `CSRRSI` - CSR Read/Set Immediate
-  - `CSRRCI` - CSR Read/Clear Immediate
-  - `CSRRW`  - CSR Read/Write
-  - `CSRRS`  - CSR Read/Set
-  - `CSRRC`  - CSR Read/Clear
-- System:
-  - `ECALL` - Enviroemnt Call
-  - `EBREAK` - Enviroment Breakpoint
-  - `SRET` - Supervisior Exception Return
-  - `WFI` - Wait for Interrupt
+== rvsc2 — Single-Cycle Without Fence and Control
 
-== rvsc3 - Single-Cycle rv32i
-The rvsc3 supports all sc2 instructions plus Memory Order, CSR Access, and System instructions, thus implementing the full rv32i instruction set.
+The rvsc2 target implements the full RV32I base ISA with three groups of instructions excluded. Memory ordering instructions are unnecessary on a single-core single-cycle processor: omitting them is behavior-preserving. CSR access and system instructions require operating system support that is absent in the bare-metal environment.
 
-// TODO:
-// explain NOPs in pipeline processors and RISC-V
-// explain that we are generating this target to make it easier to progress from here
+#figure(
+  table(
+    columns: (auto, 1fr),
+    align: left,
+    [*Group*], [*Instructions*],
+    [Integer arithmetic], [`add`, `sub`, `addi`, `and`, `andi`, `or`, `ori`, `xor`, `xori`, `sll`, `slli`, `srl`, `srli`, `sra`, `srai`],
+    [Comparison],         [`slt`, `sltu`, `slti`, `sltiu`],
+    [Loads],              [`lw`, `lh`, `lhu`, `lb`, `lbu`],
+    [Stores],             [`sw`, `sh`, `sb`],
+    [Branches],           [`beq`, `bne`, `blt`, `bge`, `bltu`, `bgeu`],
+    [Jumps],              [`jal`, `jalr`],
+    [Upper immediate],    [`lui`, `auipc`],
+  ),
+  caption: [rvsc2 native instruction set (RV32I base, excluding fence, CSR, and system groups)],
+)
 
-== rvsc4 - Single-Cycle rv64i
-The sc4 is a 64-bit single-cycle processor with the full rv64i instruction set.
+#figure(
+  table(
+    columns: (auto, 1fr),
+    align: left,
+    [*Treatment*], [*Instructions*],
+    [Behaviorally equivalent],
+      [`fence`, `fence.i`, `sfence.vma`],
+    [Rejected],
+      [`ecall`, `ebreak`, `sret`, `wfi`, CSR instructions (`csrrw`, `csrrs`, `csrrc`, `csrrwi`, `csrrsi`, `csrrci`)],
+  ),
+  caption: [rvsc2 instruction treatment],
+)
 
-In addition to the sc3 instructions, it includes:
+== rvsc3 — Single-Cycle rv32i
+
+The rvsc3 target implements the complete RV32I base integer ISA @riscv-spec, including the memory ordering, CSR access, and system instruction groups omitted from rvsc2. No instruction synthesis is required: every RV32I instruction is natively supported by the hardware.
+
+== rvsc4 — Single-Cycle rv64i
+
+The rvsc4 target is a 64-bit processor implementing the full rv64i instruction set. In addition to all rvsc3 instructions, it natively supports:
+
 - 64-bit memory operations: `ld`, `sd`, `lwu`
 - Word operations with sign-extended 64-bit results (W suffix): `addw`, `subw`, `addiw`, `sllw`, `srlw`, `sraw`, `slliw`, `srliw`, `sraiw`
 
-== rvsc5 - Single-Cycle rv64i with Multiply
-Supports all sc4 instructions plus the M extension (integer multiply and divide):
+== rvsc5 — Single-Cycle rv64im
+
+The rvsc5 target extends rvsc4 with the M extension, adding native integer multiply and divide:
 
 - Multiply: `mul`, `mulw`, `mulh`, `mulhu`, `mulhsu`
 - Signed divide: `div`, `divw`
@@ -468,13 +506,11 @@ Supports all sc4 instructions plus the M extension (integer multiply and divide)
 - Signed remainder: `rem`, `remw`
 - Unsigned remainder: `remu`, `remuw`
 
-The W-suffix variants operate on 32 bits and sign-extend the result to 64 bits, following the same convention as `addw`, `subw`, and the other W instructions from sc4.
+The W-suffix variants operate on 32 bits and sign-extend the result to 64 bits, following the same convention as `addw`, `subw`, and the other W instructions from rvsc4.
 
-This implements the rv64im ISA.
+== rvsc6 — Single-Cycle Floating-Point
 
-== rvsc6 - Single-Cycle Floating-Point
-
-Supports all sc5 instructions plus the F (single-precision) and D (double-precision) floating-point extensions, as defined in the H&P green card.
+The rvsc6 target extends rvsc5 with the F (single-precision) and D (double-precision) floating-point extensions, as defined in the H&P textbook. For pedagogical reasons this target includes only the floating-point instructions present in the textbook reference card.
 
 Loads/stores:
 - `flw`, `fsw` — single precision
@@ -505,13 +541,9 @@ Conversions (rv64):
 - `fcvt.w.d`, `fcvt.wu.d`, `fcvt.l.d`, `fcvt.lu.d` — double → int
 - `fcvt.s.d`, `fcvt.d.s` — conversion between single and double
 
-It is important to note that the FD extensions have been revised and new operations have been added; for pedagogical reasons this processor implements only those present in the textbook.
-// TODO: needs sources and perhaps a citation for which operations are new
+== rvsc7 — Single-Cycle Atomic
 
-
-== rvsc7 - Single-Cycle Atomic
-Supports all sc6 instructions plus the A extension (atomic memory operations), implementing the rv64imafd_zicsr instruction set.
-The `.w` variants operate on 32 bits (sign-extended to 64); the `.d` variants operate on 64 bits.
+The rvsc7 target extends rvsc6 with the A extension (atomic memory operations), implementing the full rv64imafd_zicsr instruction set @riscv-spec. The `.w` variants operate on 32 bits (sign-extended to 64); the `.d` variants operate on 64 bits.
 
 Load-reserved and store-conditional:
 - `lr.w`, `lr.d` — load-reserved
