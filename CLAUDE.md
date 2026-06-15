@@ -8,14 +8,14 @@ Everything lives under `/home/salust/gcc/`:
 
 | Path | Purpose |
 |------|---------|
-| `gcc/config/riscv/` | RISC-V backend — `riscv.md`, `riscv.opt`, `rvscN.h` headers |
+| `gcc/config/riscv/` | RISC-V backend — `riscv.md`, `riscv.opt`, `riscv.cc`, `rvscN.h` headers |
 | `scw/` | Build/test workspace — one subdir per target (`sc0`–`sc7`) |
 | `scw/sc1/build/` | Out-of-tree build dir for sc1 (configure once, rebuild repeatedly) |
 | `scw/sc1/install/` | Installed toolchain (`rvsc1-unknown-elf-gcc`, etc.) |
-| `scw/test/` | Test sources and `run_tests.py` |
+| `scw/test/` | Test sources, `run_tests.py`, `startup32.S`, `link32.ld` |
 | `main.typ` | Typst academic document (TCC at USP/Poli) |
 
-**Source edits happen in `gcc/config/riscv/`.** Build dirs are never edited directly.
+**Source edits happen in `gcc/config/riscv/`.** Build dirs are never edited directly. Files actually modified for this project: `riscv.md`, `riscv.opt`, `riscv.cc` (constant pool hooks), `rvscN.h` headers, `gcc/config/config.gcc`, `gcc/config/config.sub`.
 
 ## Targets
 
@@ -23,7 +23,7 @@ Eight progressive RISC-V GCC target triples model the Hennessy-Patterson educati
 
 | Target | Triple | ISA | Notes |
 |--------|--------|-----|-------|
-| sc0 | `rvsc0-unknown-elf` | rv32i subset: `lw sw beq add addi sub and or` | no `jalr`, `lui`, `auipc` |
+| sc0 | `rvsc0-unknown-elf` | rv32i subset: `lw sw beq add addi sub and or` | no `jalr`, `lui`, `auipc`; **no function calls possible** — only single-function programs compile correctly |
 | sc1 | `rvsc1-unknown-elf` | sc0 + `jalr lui` | no `auipc`/`fence`/shifts/xor/ori/andi/branches/byte+half loads+stores; all synthesized |
 | sc2 | `rvsc2-unknown-elf` | rv32i − `fence` | full control flow |
 | sc3 | `rvsc3-unknown-elf` | rv32i | first target with `fence` |
@@ -51,11 +51,27 @@ Replace `sc1` with the desired target number throughout.
 
 ## Testing
 
+Two independent layers verify correctness.
+
+### ISA compliance (`sc1_*.c` tests)
+
 ```sh
 cd scw/sc1 && just test
-# Runs run_tests.py: compiles every .c in scw/test/ with -S -O1
-# and verifies all emitted mnemonics appear in instructions.txt.
+# Runs run_tests.py: compiles every .c in scw/test/ with -S -O1,
+# assembles with riscv32-none-elf-as, disassembles with
+# riscv32-none-elf-objdump -M no-aliases (expands pseudo-instructions),
+# and checks every mnemonic against instructions.txt.
 ```
+
+The `-M no-aliases` flag is essential — it expands pseudos like `ret` to `jalr x0, 0(ra)` before the allowlist check, so forbidden instructions cannot pass disguised as pseudos.
+
+`scw/sc1/instructions.txt` lists every mnemonic the sc1 compiler is allowed to emit. When adding a new synthesis, update this file if new pseudo-mnemonics appear in `-S` output.
+
+### Behavioral tests (`behav_*.c` tests — rvsc1 only)
+
+Each `behav_*.c` program is compiled by both `rvsc1-unknown-elf-gcc -O1` and the reference compiler `riscv32-none-elf-gcc -march=rv32i -O1`, then linked with `startup32.S` (bare-metal HTIF stub) and `link32.ld` and executed on Spike with `--isa=rv32i`. The test passes if both binaries produce the same exit code. Test programs return 0 on success and a distinct nonzero code per failing assertion.
+
+rvsc0 behavioral tests cannot use the HTIF startup (which calls `main` via `jalr`). Instead rvsc0 test programs write the result directly to the `tohost` address via `sw` and spin with `beq x0, x0, .`.
 
 For quick manual checks:
 
@@ -70,16 +86,23 @@ rvsc1-unknown-elf-gcc -S -O1 scw/test/sc1_srl.c -o - \
   | grep -E '^\s+srl' && echo FAIL || echo PASS
 ```
 
-`scw/sc1/instructions.txt` lists every mnemonic the sc1 compiler is allowed to emit.
-When adding a new synthesis, update this file if new pseudo-instructions appear in `-S` output.
-
 ## Document
 
-`main.typ` is a Typst academic document (TCC at USP/Poli) describing each target's ISA, implementation, and test results. Compile with:
+`main.typ` is a Typst academic document (TCC at USP/Poli) — GCC 17.0.0 backend for educational RISC-V processors. Compile with:
 
 ```sh
 typst compile main.typ
 ```
+
+Chapter structure:
+1. Introduction — motivation (PCS3225 course at USP), objectives, rationale
+2. Related Work
+3. Conceptual Background — RISC-V ISA, single-cycle processor, C ABI, GCC architecture
+4. Development Method — study, requirements, synthesis derivation cycle, validation approach
+5. Requirements Specification — allowed instruction sets per target, correctness requirements
+6. Development — synthesis derivations (proofs + assembly), GCC implementation, known limitations
+7. Results — ISA compliance tests, Spike behavioral differential tests, program size/performance data
+8. Conclusion
 
 ## GCC backend architecture
 
@@ -123,6 +146,8 @@ The core of all instruction synthesis. Key patterns:
 - **`define_insn "*branch<mode>"`** — bne synthesis: `beq a,b,skip; lui t1,%hi(L); addi t1,t1,%lo(L); jr t1; skip:`.
 - **`define_insn "jump"`** — unconditional jump synthesis when `!TARGET_AUIPC`: `lui t1,%hi(L); addi t1,t1,%lo(L); jr t1` (needed for back-edges in synthesized loops).
 - **`one_cmplsi2` (not)** — when `!TARGET_XOR`: `sub rd, x0, rs; addi rd, rd, -1` (identity `~x = −x − 1`).
+- **LUI synthesis (rvsc0)** — `lui` is native in sc1+; for rvsc0 it is synthesized via constant pool: the 32-bit value is stored in `.rodata` at link time and loaded with `lw rd, pool_entry(x0)`. This requires the pool to live within 12-bit signed range of x0 (address < 2048), which the rvsc0 linker script guarantees. The constant pool target hook lives in `riscv.cc`.
+- **JAL synthesis (rvsc1)** — `jal ra, target` synthesized as: `lui ra, %hi(back); addi ra, ra, %lo(back); lui t0, %hi(target); addi t0, t0, %lo(target); jalr x0, 0(t0); back:`. Cost: 5 instructions, 1 extra register. `auipc` is absent in sc1, so the return address is materialized as an absolute label.
 - **`cstore<GPR:mode>4` expand** — when `TARGET_SLT && !TARGET_SLTI && CONST_INT_P(operands[3])`: calls `force_reg` to load the immediate into a register before `riscv_expand_int_scc`, preventing `slti`/`sltiu` emission. When `!TARGET_SLT && SImode`: synthesizes all ordered comparisons (LT, LTU, GE, GEU, GT, GTU, LE, LEU) before calling `riscv_expand_int_scc`. GT/LE/GTU/LEU are reduced to LT/LTU by swapping operands; GE/GEU/LE/LEU invert the result using `sub rd, one, result` (avoids XOR→zero_extract→ashift split that fails with `!TARGET_SHIFT`). `slt` synthesis: `sub diff, a, b; xor t1, a, b; xor t2, a, diff; and t1, t1, t2; xor diff, diff, t1; lshr rd, diff, 31`. `sltu` synthesis: `sub diff, a, b; not t1, a; and t2, t1, b; xor t3, a, b; not t3, t3; and t3, t3, diff; or t2, t2, t3; lshr rd, t2, 31`.
 - **`@cbranch<mode>4` expand** — when `!TARGET_SLT && SImode && code ≠ EQ/NE`: emits the same slt/sltu synthesis into a temp register, then calls `riscv_expand_conditional_branch` with `NE` (for LT/LTU/GT/GTU) or `EQ` (for GE/GEU/LE/LEU) so the branch tests `tmp != 0` or `tmp == 0`. This intercepts before `*branch<mode>` so its raw `"slt\t..."` asm templates are never reached with `!TARGET_SLT`.
 
