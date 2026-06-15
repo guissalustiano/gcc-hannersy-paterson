@@ -162,7 +162,15 @@
 // --- Acknowledgements ---
 #heading(level: 1, numbering: none, outlined: false)[Acknowledgements]
 
+// TODO: fill acknowledgements
 The main acknowledgements are directed to ...
+
+// --- Resumo ---
+#heading(level: 1, numbering: none, outlined: false)[Resumo]
+
+// TODO: escrever o resumo em português
+
+*Palavras-chave*: GCC. RISC-V. Compilador. Processador educacional.
 
 // --- Abstract ---
 #heading(level: 1, numbering: none, outlined: false)[Abstract]
@@ -325,6 +333,44 @@ Code iterators (such as `any_shift`) allow a single `define_expand` to cover mul
 
 Target-specific command-line options are declared in a `.opt` file using GCC's option-description syntax @gcc-internals. Each declaration generates a C preprocessor macro (e.g., `TARGET_SHIFT`) that can be tested in `.md` condition strings and in C target-hook implementations. A per-target header file defines `CC1_SPEC`, a GCC macro that is evaluated when the driver invokes the compiler proper (`cc1`). It contains conditional option-injection rules such as `%{!mshift:-mno-shift}`, which reads: "if the user did not explicitly pass `-mshift`, inject `-mno-shift`." This mechanism makes a target self-configuring: users invoke `rvsc1-unknown-elf-gcc` without any manual `-mno-*` flags, and the correct synthesis behaviour is activated automatically.
 
+
+= Development Method
+
+This work followed an iterative process organized into four phases: a study phase to understand GCC's backend architecture, a requirements phase to define the instruction boundaries for each target, a per-synthesis implementation-and-test cycle that forms the core of the work, and a validation phase that confirms behavioral correctness on a reference simulator. Chapters 4, 5, and 6 describe the outputs of these phases in detail; this chapter describes the process itself.
+
+== Study of GCC Internals
+
+The first phase was a structured study of GCC's backend extension mechanisms. The entry point was the GCC Internals manual @gcc-internals, which documents the machine description language (`.md`), the option description system (`.opt`), and the role of per-target configuration headers. After establishing a conceptual model from the manual, the existing RISC-V backend --- `gcc/config/riscv/riscv.md`, `riscv.opt`, and `config.gcc` --- was examined as a working reference implementation.
+
+Two diagnostic tools were central throughout the study and subsequent implementation phases. The `-S` flag causes GCC to emit assembly rather than an object file, making the compiler's instruction selection directly observable. The `-fdump-rtl-*` family of flags produces snapshots of GCC's internal Register Transfer Language (RTL) representation at each compilation stage; these were used to understand why a pattern matched or failed to match during instruction selection, and to verify that `define_expand` bodies fired at the correct point in the compilation pipeline.
+
+== Requirements Specification
+
+The requirements for each target were derived from two distinct sources, depending on the target tier.
+
+For the two primary targets, the instruction boundaries are externally fixed. The rvsc0 instruction set is exactly the set supported by the single-cycle processor described in Chapter 4.4 of the Hennessy-Patterson textbook @patterson2020. The rvsc1 instruction set is rvsc0 extended with the minimum additions required to support the full C calling convention: `lui` (to materialize absolute addresses) and `jalr` (to perform indirect jumps and function returns). These were determined by analyzing the RISC-V ABI @riscv-psabi and identifying which operations a conforming C calling convention unavoidably requires.
+
+For the remaining six targets (rvsc2--rvsc7), the instruction boundaries follow the natural extension hierarchy of the RISC-V specification @riscv-spec: from the RV32I base through 64-bit operations, integer multiply-divide, single- and double-precision floating-point, and atomic memory operations. No synthesis is required for these targets, as each progressively enables instructions already present in the upstream GCC backend; the contribution is the target triple registration and configuration.
+
+The full requirements are specified in Chapter 4.
+
+== Synthesis Derivation and Implementation
+
+The rvsc0 and rvsc1 targets require GCC to synthesize every instruction outside the native set using only the instructions the processor supports. Each synthesis was developed through the following cycle, applied independently to each missing operation.
+
+The process begins by identifying the missing operation — an instruction that GCC's middle-end may legally request but that the target processor does not support. The synthesis algorithm is then derived and expressed as C pseudocode, which serves both as a correctness argument and as an unambiguous specification of the target behavior. The pseudocode is then lifted directly into a `define_expand` body in `riscv.md`, using GCC's RTL emit helpers to generate the equivalent sequence of native instructions. Correctness of the expansion is confirmed in two steps: the `-S` output is inspected to verify that no forbidden mnemonics appear, and the resulting program is executed on the Spike RISC-V ISA simulator @spike to confirm that the synthesized sequence produces the same result as the original instruction would have.
+
+This cycle was repeated for each operation that the compiler may emit for a bare-metal freestanding C program targeting rvsc0 or rvsc1. The derivations and the resulting implementation are described in Chapter 5.
+
+== Validation
+
+Validation addresses both correctness requirements stated in Chapter 4: ISA compliance and behavioral equivalence.
+
+ISA compliance is verified structurally: the compiler is invoked with `-S` on a test program that exercises a specific operation, and the output is scanned for any mnemonic not in the target's allowed set. This check is automated by the `run_tests.py` script, which compiles each test file and compares the emitted mnemonics against an allowlist specific to the target.
+
+Behavioral equivalence is verified by compiling representative C programs and executing the resulting ELF binaries on Spike. Because Spike implements the full RV32I ISA, it can execute sc1-compiled programs (whose synthesis sequences are all valid RV32I) and confirm that return values and memory state match the expected output. The test programs currently cover arithmetic operations, control flow, function calls, pointer manipulation, and integer comparisons; integration of the official RISC-V test suite is planned as future work.
+
+Test results are presented in Chapter 6.
 
 = Requirements Specification
 // Define and describe the requirements of the work. The work may involve system development,
@@ -525,44 +571,6 @@ AMO (atomic memory operations):
 - `amomaxu.w`, `amomaxu.d` — atomic unsigned maximum
 - `amomin.w`, `amomin.d` — atomic signed minimum
 - `amominu.w`, `amominu.d` — atomic unsigned minimum
-
-= Development Method
-
-This work followed an iterative process organized into four phases: a study phase to understand GCC's backend architecture, a requirements phase to define the instruction boundaries for each target, a per-synthesis implementation-and-test cycle that forms the core of the work, and a validation phase that confirms behavioral correctness on a reference simulator. Chapters 4, 5, and 6 describe the outputs of these phases in detail; this chapter describes the process itself.
-
-== Study of GCC Internals
-
-The first phase was a structured study of GCC's backend extension mechanisms. The entry point was the GCC Internals manual @gcc-internals, which documents the machine description language (`.md`), the option description system (`.opt`), and the role of per-target configuration headers. After establishing a conceptual model from the manual, the existing RISC-V backend --- `gcc/config/riscv/riscv.md`, `riscv.opt`, and `config.gcc` --- was examined as a working reference implementation.
-
-Two diagnostic tools were central throughout the study and subsequent implementation phases. The `-S` flag causes GCC to emit assembly rather than an object file, making the compiler's instruction selection directly observable. The `-fdump-rtl-*` family of flags produces snapshots of GCC's internal Register Transfer Language (RTL) representation at each compilation stage; these were used to understand why a pattern matched or failed to match during instruction selection, and to verify that `define_expand` bodies fired at the correct point in the compilation pipeline.
-
-== Requirements Specification
-
-The requirements for each target were derived from two distinct sources, depending on the target tier.
-
-For the two primary targets, the instruction boundaries are externally fixed. The rvsc0 instruction set is exactly the set supported by the single-cycle processor described in Chapter 4.4 of the Hennessy-Patterson textbook @patterson2020. The rvsc1 instruction set is rvsc0 extended with the minimum additions required to support the full C calling convention: `lui` (to materialize absolute addresses) and `jalr` (to perform indirect jumps and function returns). These were determined by analyzing the RISC-V ABI @riscv-psabi and identifying which operations a conforming C calling convention unavoidably requires.
-
-For the remaining six targets (rvsc2--rvsc7), the instruction boundaries follow the natural extension hierarchy of the RISC-V specification @riscv-spec: from the RV32I base through 64-bit operations, integer multiply-divide, single- and double-precision floating-point, and atomic memory operations. No synthesis is required for these targets, as each progressively enables instructions already present in the upstream GCC backend; the contribution is the target triple registration and configuration.
-
-The full requirements are specified in Chapter 4.
-
-== Synthesis Derivation and Implementation
-
-The rvsc0 and rvsc1 targets require GCC to synthesize every instruction outside the native set using only the instructions the processor supports. Each synthesis was developed through the following cycle, applied independently to each missing operation.
-
-The process begins by identifying the missing operation — an instruction that GCC's middle-end may legally request but that the target processor does not support. The synthesis algorithm is then derived and expressed as C pseudocode, which serves both as a correctness argument and as an unambiguous specification of the target behavior. The pseudocode is then lifted directly into a `define_expand` body in `riscv.md`, using GCC's RTL emit helpers to generate the equivalent sequence of native instructions. Correctness of the expansion is confirmed in two steps: the `-S` output is inspected to verify that no forbidden mnemonics appear, and the resulting program is executed on the Spike RISC-V ISA simulator @spike to confirm that the synthesized sequence produces the same result as the original instruction would have.
-
-This cycle was repeated for each operation that the compiler may emit for a bare-metal freestanding C program targeting rvsc0 or rvsc1. The derivations and the resulting implementation are described in Chapter 5.
-
-== Validation
-
-Validation addresses both correctness requirements stated in Chapter 4: ISA compliance and behavioral equivalence.
-
-ISA compliance is verified structurally: the compiler is invoked with `-S` on a test program that exercises a specific operation, and the output is scanned for any mnemonic not in the target's allowed set. This check is automated by the `run_tests.py` script, which compiles each test file and compares the emitted mnemonics against an allowlist specific to the target.
-
-Behavioral equivalence is verified by compiling representative C programs and executing the resulting ELF binaries on Spike. Because Spike implements the full RV32I ISA, it can execute sc1-compiled programs (whose synthesis sequences are all valid RV32I) and confirm that return values and memory state match the expected output. The test programs currently cover arithmetic operations, control flow, function calls, pointer manipulation, and integer comparisons; integration of the official RISC-V test suite is planned as future work.
-
-Test results are presented in Chapter 6.
 
 = Development
 
@@ -1438,5 +1446,3 @@ For SLL with a shift amount $b$, the synthesis loop executes $b$ iterations of 4
 
 #bibliography("refs.bib", style: "ieee")
 
-= Appendix
-=== Samples
