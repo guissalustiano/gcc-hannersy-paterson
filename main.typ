@@ -180,7 +180,7 @@ This is the english abstract.
 *Keywords*: GCC. RISC-V. Compiler. Educational processor.
 
 // --- List of Abbreviations and Acronyms ---
-#heading(level: 1, numbering: none)[List of Abbreviations and Acronyms]
+#heading(level: 1, numbering: none, outlined: false)[List of Abbreviations and Acronyms]
 
 #table(
   columns: (3cm, 1fr),
@@ -207,7 +207,7 @@ This is the english abstract.
 #outline(title: [List of Tables], target: figure.where(kind: table))
 
 // --- Table of Contents ---
-#heading(level: 1, numbering: none)[TABLE OF CONTENTS]
+#heading(level: 1, numbering: none, outlined: false)[TABLE OF CONTENTS]
 #outline(title: none, indent: auto, depth: 3)
 
 // --- Textual Elements Setup ---
@@ -338,16 +338,16 @@ The GNU Compiler Collection (GCC) is a portable, multi-language, multi-target co
 
 The compilation pipeline proceeds as follows @gcc-internals. The language frontend parses source code and produces an abstract syntax tree (AST). The AST is lowered to GIMPLE, a high-level, language-independent, statement-level intermediate representation in static single-assignment (SSA) form. The middle-end applies target-independent optimisations to GIMPLE (constant folding, inlining, loop transformations, and others). GIMPLE is then lowered to RTL (Register Transfer Language), a low-level IR that models instructions as operations on pseudo-registers and memory. The backend operates on RTL to produce assembly.
 
-The backend performs three main tasks @gcc-internals. Instruction selection pattern-matches RTL expressions against the target's machine description to select real instructions. Register allocation assigns the potentially unbounded set of pseudo-registers to the finite set of physical registers, inserting spill code where necessary. Instruction scheduling reorders instructions to hide latency and avoid data hazards; this step is less significant for simple in-order single-cycle processors.
+The backend performs three main tasks @gcc-internals. Instruction selection pattern-matches RTL expressions against the target's machine description to select real instructions. Register allocation assigns the potentially unbounded set of pseudo-registers to the finite set of physical registers, inserting spill code where necessary. Instruction scheduling reorders instructions to hide pipeline latency and improve throughput; it is irrelevant for single-cycle processors, which have no pipeline and therefore no data hazards.
 
 The core of a GCC backend is the machine description file (`.md`), which declaratively specifies the target's instruction set and expansion rules @gcc-internals. It contains two primary construct types:
 
-- `define_insn` --- specifies a named RTL pattern, an assembly output template, and a predicate condition string. When the condition evaluates to false (e.g., `TARGET_SHIFT` is 0), the pattern is invisible to the instruction selector and will never be emitted.
+- `define_insn` --- specifies a named RTL pattern, an assembly output template, and a predicate condition string that tests target capabilities. When the condition evaluates to false, the pattern is invisible to the instruction selector and will never be emitted.
 - `define_expand` --- specifies a named operation that expands into an arbitrary sequence of RTL insns when the compiler needs to generate that operation. The expansion body may call `DONE` to signal that it has produced the complete implementation, preventing any fallthrough to a `define_insn`. Expansions are the mechanism used to synthesize complex operations from simpler ones.
 
 Code iterators (such as `any_shift`) allow a single `define_expand` to cover multiple related operations (ASHIFT, LSHIFTRT, ASHIFTRT) in one body, with runtime-constant guards like `(<CODE>) == ASHIFT` selecting the appropriate synthesis path.
 
-Target-specific command-line options are declared in a `.opt` file using GCC's option-description syntax @gcc-internals. Each declaration generates a C preprocessor macro (e.g., `TARGET_SHIFT`) that can be tested in `.md` condition strings and in C target-hook implementations. A per-target header file defines `CC1_SPEC`, a GCC macro that is evaluated when the driver invokes the compiler proper (`cc1`). It contains conditional option-injection rules such as `%{!mshift:-mno-shift}`, which reads: "if the user did not explicitly pass `-mshift`, inject `-mno-shift`." This mechanism makes a target self-configuring: users invoke `rvsc1-unknown-elf-gcc` without any manual `-mno-*` flags, and the correct synthesis behaviour is activated automatically.
+Target-specific command-line options are declared in a `.opt` file using GCC's option-description syntax @gcc-internals. Each declaration generates a C preprocessor macro that can be tested in `.md` condition strings and in C target-hook implementations. A per-target header file defines `CC1_SPEC`, a GCC macro evaluated when the driver invokes the compiler proper (`cc1`). It contains conditional option-injection rules of the form "if the user did not explicitly pass a flag, inject its negation." This mechanism makes a target self-configuring: users invoke the target-specific compiler without any manual flags, and the correct behaviour is activated automatically.
 
 
 = Development Method
