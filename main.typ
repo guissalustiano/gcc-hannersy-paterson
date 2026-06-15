@@ -566,7 +566,36 @@ Test results are presented in Chapter 6.
 
 = Development
 
-The rvsc0 and rvsc1 targets restrict the instruction set available to the compiler (Chapter 4 specifies the complete native instruction set for each target). Every C construct the compiler may emit must be realized using only those native instructions; for every excluded instruction, GCC synthesizes an equivalent sequence at compile time. This chapter presents the mathematical derivation and proof of each synthesis, followed by the GCC implementation that makes the process transparent to the programmer.
+The rvsc0 and rvsc1 targets restrict the instruction set available to the compiler (Chapter 4 specifies the complete native instruction set for each target). Every C construct the compiler may emit must be realized using only those native instructions; for every excluded instruction, GCC synthesizes an equivalent sequence at compile time. This chapter presents the tools and infrastructure used, the mathematical derivation and proof of each synthesis, the GCC implementation that makes the process transparent to the programmer, and the known limitations of each target.
+
+== Technologies Used
+
+=== GCC 17.0.0
+
+The custom targets are implemented as a backend extension to GCC 17.0.0. GCC is chosen because it is the dominant open-source compiler for embedded and systems software and because its machine description framework provides a declarative mechanism for defining instruction synthesis rules that is already present in the upstream RISC-V backend. The following files in the GCC source tree were modified or added:
+
+#figure(
+  table(
+    columns: (auto, 1fr),
+    align: left,
+    [*File*], [*Role*],
+    [`gcc/config/riscv/riscv.md`],  [Machine description: synthesis patterns and native instruction guards],
+    [`gcc/config/riscv/riscv.opt`], [Option declarations: per-synthesis boolean flags],
+    [`gcc/config/riscv/riscv.cc`],  [Target hooks: constant pool handling for LUI synthesis],
+    [`gcc/config/riscv/rvscN.h`],   [Per-target headers: `CC1_SPEC` injecting `-mno-*` flags automatically],
+    [`gcc/config/config.gcc`],      [Triple mapping: `rvscN-*-elf*` to `cpu_type=riscv`],
+    [`gcc/config/config.sub`],      [Triple normalisation: recognises `rvscN` as a valid CPU name],
+  ),
+  caption: [GCC source files modified or added for this project],
+)
+
+=== GNU Binutils (riscv32/64-none-elf)
+
+The upstream GNU binutils cross toolchain is used without modification as the assembler and linker. The binutils triple differs from the compiler triple: `riscv32-none-elf` for rvsc0--rvsc3 and `riscv64-none-elf` for rvsc4--rvsc7. This separation is possible because the assembler accepts the full RISC-V instruction set --- the ISA restriction lives entirely in the GCC backend, not in the assembler. The `objdump -M no-aliases` flag is used in the test suite to expand pseudo-instructions to their real opcodes before checking for forbidden mnemonics.
+
+=== Spike 1.1.1-dev
+
+Spike is the official RISC-V ISA reference simulator @spike. It implements the full RV64IMAFD instruction set, making it suitable as the behavioral oracle: a binary compiled by `rvsc1-unknown-elf-gcc` contains only valid RV32I instructions (the synthesis sequences are themselves valid RV32I), so Spike can execute it and report the correct result. Spike is invoked with `--isa=rv32i` for rvsc0--rvsc3 tests, and with `--log-commits` to count retired instructions for performance measurements.
 
 == Synthesis Derivations <sc1-synthesis>
 
@@ -957,6 +986,8 @@ This requires that `pool_entry` fits in a 12-bit signed offset from `x0` (addres
   [lw from pool], [1], [1],
 )
 
+*Implementation choice.* Approach 2 (constant pool via `lw`) was selected: it produces a single instruction at each use site and avoids the shift instructions that rvsc0 does not support natively. The constraint it imposes --- every pool entry must reside within the 12-bit signed offset range of `x0`, i.e., below address 2048 --- is met by the rvsc0 linker script, which places `.text` at address 0 and the constant pool immediately after. Programs that fit within the first 2 KB of ROM always satisfy this constraint.
+
 ==== LB, LBU, LH, LHU <sc1-lb-synthesis>
 
 Since sc1 supports only `lw` (32-bit word loads), every byte or halfword load is synthesized in four steps: align the address to a word boundary, load the word, extract the target unit by shift, and sign-extend or zero-extend.
@@ -1235,34 +1266,171 @@ The construct `%{!mfoo:-mno-foo}` reads: "if the user did not pass `-mfoo`, inje
     --enable-languages=c
 ```
 
+== Known Limitations
+
+=== rvsc0: No Function Calls
+
+The rvsc0 processor supports neither `jalr` nor `jal`. Functions cannot be called or returned from in rvsc0-compiled code: the compiler has no instruction with which to perform an indirect jump while saving the return address. As a consequence, only single-function C programs --- programs where all control flow remains within `main()` and no other function is invoked --- can be compiled for rvsc0. Any C source that contains a call to a function other than `main` will either fail at link time or produce incorrect control flow at runtime.
+
+=== rvsc1: Function Body Size Limit
+
+The only native conditional branch in rvsc1 is `beq`, which has a ±4 KB PC-relative offset range (12-bit signed immediate). For branch targets that exceed this range, the GCC backend emits a long form:
+
+```asm
+beq  rs1, rs2, skip        # short branch: skip the jump if condition holds
+lui  t1, %hi(target)
+addi t1, t1, %lo(target)
+jr   t1                    # absolute jump to target
+skip:
+```
+
+This long form is itself valid rvsc1 code, so correctness is preserved. However, the long form for the inverted branch (`bne`) chains through the `bne` synthesis (which uses `beq`), so individual function bodies should remain under approximately 4 KB of machine code --- roughly 1 000 synthesized instructions --- to avoid triggering branch relaxation in unexpected cases. Typical educational programs are well within this limit.
+
+=== rvsc0 and rvsc1: No 64-bit Integers or Floating Point
+
+Both targets compile freestanding bare-metal C without a C standard library or a compiler support library (libgcc). The C types `long long`, `unsigned long long`, `float`, and `double` are syntactically accepted by the compiler but will fail at link time if the required helper routines (`__muldi3`, `__addsf3`, etc.) are not available. These types are not in scope for this project and are not tested.
+
+// TODO: investigate libgcc compilation
+
 = Results
 
 == Tests
 
-=== Validating ASM
-- generate only for
+Two independent test layers verify the two correctness requirements stated in Chapter 4: ISA compliance and behavioral equivalence.
 
+=== ISA Compliance Tests
 
+ISA compliance is verified by `run_tests.py`. For every `.c` file in `scw/test/`, the script compiles the program with `-S -O1`, assembles the output with `riscv32-none-elf-as`, disassembles the resulting object with `riscv32-none-elf-objdump -M no-aliases`, and checks every mnemonic in the disassembly against the per-target allowlist in `instructions.txt`. The `-M no-aliases` flag is essential: it expands pseudo-instructions to their underlying real opcodes before the check, so a pseudo such as `ret` (which expands to `jalr x0, 0(ra)`) cannot pass undetected for a target that forbids `jalr`.
 
-=== Validating Result
-- Stone RISC-V (no syscall)
-- RISC-V official test implementation
-- QEMU baremetal
-- Rocket
-- only sc0 to sc2
-- single-cycle
-- only sc0 and sc1
+#figure(
+  table(
+    columns: (auto, auto, 1fr),
+    align: left,
+    [*Test file*], [*Targets*], [*Operations exercised*],
+    [`sc1_not.c`],         [rvsc0, rvsc1], [Bitwise NOT (`~`)],
+    [`sc1_xor.c`],         [rvsc0, rvsc1], [XOR register and immediate],
+    [`sc1_shift.c`],       [rvsc0, rvsc1], [SLL, SRL, SRA with constant counts],
+    [`sc1_sll_var.c`],     [rvsc0, rvsc1], [SLL with variable shift count],
+    [`sc1_srl.c`],         [rvsc0, rvsc1], [SRL with variable shift count],
+    [`sc1_sra.c`],         [rvsc0, rvsc1], [SRA with variable shift count],
+    [`sc1_slt.c`],         [rvsc0, rvsc1], [SLT and SLTU],
+    [`sc1_andi.c`],        [rvsc0, rvsc1], [ANDI (immediate AND)],
+    [`sc1_ori.c`],         [rvsc0, rvsc1], [ORI (immediate OR)],
+    [`sc1_branch.c`],      [rvsc0, rvsc1], [BNE, BLT, BGE, BLTU, BGEU],
+    [`sc1_lb.c`],          [rvsc0, rvsc1], [LB (signed byte load)],
+    [`sc1_lbu.c`],         [rvsc0, rvsc1], [LBU (unsigned byte load)],
+    [`sc1_lh.c`],          [rvsc0, rvsc1], [LH (signed halfword load)],
+    [`sc1_lhu.c`],         [rvsc0, rvsc1], [LHU (unsigned halfword load)],
+    [`sc1_sb.c`],          [rvsc0, rvsc1], [SB (byte store)],
+    [`sc1_sh.c`],          [rvsc0, rvsc1], [SH (halfword store)],
+    [`sc1_call.c`],        [rvsc1],        [Function call (JAL synthesis)],
+    [`sc1_loop.c`],        [rvsc1],        [Loop with synthesized branch],
+    [`sc1_add.c`],         [rvsc0, rvsc1], [ADD and ADDI (native, regression)],
+    [`fence.c`],           [rvsc2],        [FENCE absent from output],
+  ),
+  caption: [ISA compliance test files and the operations they cover],
+)
+
+=== Behavioral Tests --- rvsc1
+
+Behavioral equivalence for rvsc1 is verified by differential testing against a standard upstream cross-compiler. For each `behav_*.c` test file, the program is compiled with both `rvsc1-unknown-elf-gcc -O1` and the reference compiler `riscv32-none-elf-gcc -march=rv32i -O1`. Both outputs are assembled with `riscv32-none-elf-as`, linked with the same bare-metal HTIF startup (`startup32.S`) and linker script (`link32.ld`), and executed on Spike with `--isa=rv32i`. The test passes if and only if both binaries produce the same exit code.
+
+The HTIF startup calls `main()`, captures its return value, writes `(return_value << 1) | 1` to the `tohost` memory address, and spins. Spike reads `tohost` and exits with the return value. Test programs return 0 on success and a distinct nonzero error code for each failing assertion, so a mismatch between the two exit codes pinpoints the failing case.
+
+#figure(
+  table(
+    columns: (auto, 1fr),
+    align: left,
+    [*Test file*], [*Operations exercised*],
+    [`behav_not.c`],         [Bitwise NOT],
+    [`behav_xor.c`],         [XOR register and immediate],
+    [`behav_shift_const.c`], [SLL, SRL, SRA with constant counts],
+    [`behav_shift_var.c`],   [SLL, SRL, SRA with variable shift counts],
+    [`behav_andi.c`],        [ANDI],
+    [`behav_ori.c`],         [ORI],
+    [`behav_bne.c`],         [BNE],
+    [`behav_branch.c`],      [BLT, BGE, BLTU, BGEU],
+    [`behav_lb.c`],          [LB],
+    [`behav_lbu.c`],         [LBU],
+    [`behav_lh.c`],          [LH],
+    [`behav_lhu.c`],         [LHU],
+    [`behav_sb.c`],          [SB],
+    [`behav_sh.c`],          [SH],
+    [`behav_call.c`],        [Function call and return],
+    // TODO: add behav_slt.c and behav_sra.c
+  ),
+  caption: [Behavioral test files for rvsc1 differential testing],
+)
+
+=== Behavioral Tests --- rvsc0
+
+rvsc0 has no `jalr` instruction, so the standard HTIF startup (which uses `call main`, expanding to `jalr`) cannot be used. Instead, rvsc0 test programs are structured so that `main()` writes its result directly to the `tohost` memory address via `sw` and then spins with `beq x0, x0, .`. The written value follows the same HTIF encoding as the rvsc1 tests. For differential testing, the same C source is compiled with `riscv32-none-elf-gcc` with the identical `tohost`-writing structure, and the two Spike exit codes are compared.
+
+=== rvsc2 --- Fence Mnemonic Check
+
+For rvsc2, only ISA compliance needs to be verified: the `fence` mnemonic must be absent from the output. This is confirmed by `fence.c`, which contains a C construct that would emit `fence` on a full RV32I target. The ISA compliance script (`run_tests.py`) checks that neither `fence` nor `fence.i` appears in the disassembly. No behavioral testing is required because the remainder of the rvsc2 instruction set is identical to rvsc3 (full RV32I), whose correctness is already established by the upstream GCC test suite.
+
+=== rvsc3 and Above
+
+No testing is performed for rvsc3 through rvsc7. These targets contain no synthesis code: they only enable flags that correspond to instructions already present in the upstream RISC-V backend. Their correctness follows from the correctness of the upstream backend and the GCC test suite.
 
 == Program Size
 
+Each synthesized instruction expands into a sequence of native instructions, increasing the static size of the compiled binary. The expansion ratio --- the number of native instructions emitted divided by the number of instructions a full-ISA compiler would emit --- quantifies the cost of each missing hardware instruction.
+
+Synthesis sequences fall into two categories. _Constant-length_ expansions always emit the same number of instructions regardless of operand values: NOT expands to 2 instructions, XOR to 6 (counting the NOT it calls), and each immediate variant (ANDI, ORI) adds 1 instruction. _Variable-length_ expansions depend on runtime values: SLL, SRL, and SRA use count-down loops whose length is proportional to the shift amount, with worst-case counts of 127, ~170, and ~200 instructions respectively for a shift of 31.
+
+// TODO [DATA REQUIRED]
+// Run rvsc0, rvsc1, and rvsc3 compilers on the programs below and count instructions:
+//   riscv32-none-elf-objdump -d <elf> | grep -c '^\s\+[0-9a-f]\+:'
+//
+// Programs: behav_xor.c, behav_shift_var.c (compiled with shift amount 8), behav_sb.c
+// Table columns: Program | rvsc3 instructions (native) | rvsc1 instructions (synthesized) | expansion ratio
+//
+// Replace this TODO block with the populated table.
+
 == Program Performance
-In instructions
-- Instruction cycle or clock cycle
-- Processor has memory that slows it down
+
+Since the target processor is single-cycle, every instruction retires in exactly one clock cycle (ignoring memory latency, which is implementation-dependent). Instruction count therefore equals clock cycle count for programs that access only register operands. Memory operations add latency that depends on the specific hardware implementation.
+
+Dynamic instruction counts are measured by running each compiled binary on Spike with `--log-commits` and counting the number of retired-instruction log lines. Variable-length syntheses are measured across a range of operand values to characterise their runtime behavior.
+
+For SLL with a shift amount $b$, the synthesis loop executes $b$ iterations of 4 instructions each plus 3 setup instructions, giving a total retired instruction count of $3 + 4b$. This predicts:
+
+#figure(
+  table(
+    columns: (auto, auto, auto, auto),
+    align: left,
+    [*Shift amount*], [*Predicted (3+4b)*], [*rvsc3 (native)*], [*rvsc1 (measured)*],
+    [0],  [3],   [1], [// TODO],
+    [1],  [7],   [1], [// TODO],
+    [8],  [35],  [1], [// TODO],
+    [16], [67],  [1], [// TODO],
+    [31], [127], [1], [// TODO],
+  ),
+  caption: [SLL retired instruction counts: predicted vs. measured],
+)
+
+// TODO [DATA REQUIRED]
+// Run the same programs as in the Program Size section.
+// Command: spike --log-commits --isa=rv32i <elf> 2>&1 | grep -c '^[0-9]'
+// Table columns: Program | rvsc3 cycles | rvsc1 cycles | overhead ratio
+//
+// Replace the SLL TODO values above and add a second table for xor and sb programs.
 
 == Discussion
-- Show that the compiler does not emit instructions unsupported by the target
-- And is sufficiently broad
+
+// TODO [after data is collected]: ~3 paragraphs:
+// 1. ISA compliance: the compiler never emits a forbidden mnemonic, as confirmed
+//    by every ISA compliance test passing. The use of objdump -M no-aliases ensures
+//    pseudo-instructions are fully expanded before the check.
+// 2. Behavioral equivalence: rvsc1 synthesized programs produce the same exit codes
+//    as reference RV32I binaries on Spike across all differential tests. rvsc0 programs
+//    produce the same tohost values as the reference for single-function programs.
+// 3. Performance cost: quantify overhead from the tables above. Note that for typical
+//    educational programs (small shift amounts, few byte operations) the overhead is
+//    modest and predictable. The pedagogical value is that students can observe the
+//    concrete cost of each ISA restriction by comparing -S output between rvsc1 and rvsc3.
 
 = Conclusion
 
