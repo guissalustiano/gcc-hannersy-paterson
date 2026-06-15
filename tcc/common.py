@@ -1,4 +1,4 @@
-"""Shared utilities for rvscN ISA compliance validation."""
+"""Shared utilities for rvscN ISA compliance validation and behavioral testing."""
 
 import re
 import shutil
@@ -21,6 +21,8 @@ def find_tool(name: str) -> str:
 def _run(*cmd: str) -> subprocess.CompletedProcess:
     return subprocess.run(list(cmd), check=True, capture_output=True, text=True)
 
+
+# ── assembly validation pipeline ───────────────────────────────────────────
 
 def compile_to_asm(compiler: str, src: Path, cflags: list[str]) -> str:
     out = Path(tempfile.mktemp(suffix=".s"))
@@ -74,3 +76,36 @@ def validate_source(
         obj.unlink(missing_ok=True)
     violations = sorted({m for m in mnemonics if m not in allowed})
     return not violations, violations
+
+
+# ── behavioral / spike pipeline ────────────────────────────────────────────
+
+def assemble_file(assembler: str, march: str, src: Path, out: Path) -> None:
+    """Assemble a .s/.S file directly to a caller-specified output path."""
+    try:
+        _run(assembler, f"-march={march}", "-o", str(out), str(src))
+    except subprocess.CalledProcessError as e:
+        sys.exit(f"assemble error ({src.name}):\n{e.stderr.strip()}")
+
+
+def link_elf(linker: str, ld_script: Path, objects: list[Path], out: Path) -> None:
+    try:
+        _run(linker, "-T", str(ld_script), *[str(o) for o in objects], "-o", str(out))
+    except subprocess.CalledProcessError as e:
+        sys.exit(f"link error:\n{e.stderr.strip()}")
+
+
+class SpikeTimeout(Exception):
+    pass
+
+
+def run_spike(isa: str, elf: Path, timeout: int = 30) -> int:
+    try:
+        r = subprocess.run(
+            ["spike", f"--isa={isa}", str(elf)],
+            capture_output=True, text=True,
+            timeout=timeout,
+        )
+        return r.returncode
+    except subprocess.TimeoutExpired:
+        raise SpikeTimeout(elf.name)
