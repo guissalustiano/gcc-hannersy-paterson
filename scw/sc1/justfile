@@ -1,3 +1,0 @@
-target := "rvsc1-unknown-elf"
-
-import "../common.just"
