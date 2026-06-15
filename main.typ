@@ -35,6 +35,8 @@
   text(size: 12pt, weight: "bold", upper(it))
 }
 
+#let chref(lbl) = ref(lbl, supplement: [Chapter])
+
 // --- Cover Page (Capa) [cite: 2163, 2795] ---
 #{
   set page(numbering: none)
@@ -214,7 +216,7 @@ This is the english abstract.
 #set page(numbering: "1")
 
 
-= Introduction
+= Introduction <ch-intro>
 
 == Motivation
 // - Presents a brief state-of-the-art overview of the subject that will be the theme of the work,
@@ -258,10 +260,10 @@ Furthermore, students interact with GCC — the dominant open-source compiler fo
 == Document Organization
 
 // TODO: review this after document is finished
-The remainder of this monograph is organized as follows. Chapter 2 surveys related work. Chapter 3 presents the conceptual background, covering the GCC compilation framework, the RISC-V instruction set architecture, and the architecture of the Hennessy-Patterson educational processor. Chapter 4 describes the development method, including the specification, implementation, and testing phases followed for each target. Chapter 5 specifies the requirements for each of the eight targets, defining the allowed instruction sets and the synthesis obligations imposed on the compiler. Chapter 6 details the implementation, describing the instruction synthesis techniques developed inside the GCC machine description and the per-target configuration files. Chapter 7 presents the test results and discusses the validity and limitations of each target. Chapter 8 presents the conclusions, contributions, and directions for future work.
+The remainder of this monograph is organized as follows. #chref(<ch-related-work>) surveys related work. #chref(<ch-background>) presents the conceptual background, covering the GCC compilation framework, the RISC-V instruction set architecture, and the architecture of the Hennessy-Patterson educational processor. #chref(<ch-method>) describes the development method, including the specification, implementation, and testing phases followed for each target. #chref(<ch-requirements>) specifies the requirements for each of the eight targets, defining the allowed instruction sets and the synthesis obligations imposed on the compiler. #chref(<ch-development>) details the implementation, describing the instruction synthesis techniques developed inside the GCC machine description and the per-target configuration files. #chref(<ch-results>) presents the test results and discusses the validity and limitations of each target. #chref(<ch-conclusion>) presents the conclusions, contributions, and directions for future work.
 
 
-= Related Work
+= Related Work <ch-related-work>
 
 // TODO: discuss scope and coverage with advisor.
 // Candidate areas:
@@ -271,7 +273,7 @@ The remainder of this monograph is organized as follows. Chapter 2 surveys relat
 // - ISA subset selection in compiler research — design-time vs. this work's compile-time synthesis direction
 
 
-= Conceptual Background
+= Conceptual Background <ch-background>
 // - Defines the representative sections based on the work.
 // - Presents the concepts used and the literature review.
 // - Consulted works must be cited and referenced in the text.
@@ -350,9 +352,9 @@ Code iterators (such as `any_shift`) allow a single `define_expand` to cover mul
 Target-specific command-line options are declared in a `.opt` file using GCC's option-description syntax @gcc-internals. Each declaration generates a C preprocessor macro that can be tested in `.md` condition strings and in C target-hook implementations. A per-target header file defines `CC1_SPEC`, a GCC macro evaluated when the driver invokes the compiler proper (`cc1`). It contains conditional option-injection rules of the form "if the user did not explicitly pass a flag, inject its negation." This mechanism makes a target self-configuring: users invoke the target-specific compiler without any manual flags, and the correct behaviour is activated automatically.
 
 
-= Development Method
+= Development Method <ch-method>
 
-This work followed an iterative process organized into four phases: a study phase to understand GCC's backend architecture, a requirements phase to define the instruction boundaries for each target, a per-synthesis implementation-and-test cycle that forms the core of the work, and a validation phase that confirms behavioral correctness on a reference simulator. Chapters 4, 5, and 6 describe the outputs of these phases in detail; this chapter describes the process itself.
+This work followed an iterative process organized into four phases: a study phase to understand GCC's backend architecture, a requirements phase to define the instruction boundaries for each target, a per-synthesis implementation-and-test cycle that forms the core of the work, and a validation phase that confirms behavioral correctness on a reference simulator. #chref(<ch-requirements>), #chref(<ch-development>), and #chref(<ch-results>) describe the outputs of these phases in detail; this chapter describes the process itself.
 
 == Study of GCC Internals
 
@@ -362,13 +364,7 @@ Two diagnostic tools were central throughout the study and subsequent implementa
 
 == Requirements Specification
 
-The requirements for each target were derived from two distinct sources, depending on the target tier.
-
-For the two primary targets, the instruction boundaries are externally fixed. The rvsc0 instruction set is exactly the set supported by the single-cycle processor described in Chapter 4.4 of the Hennessy-Patterson textbook @patterson2020. The rvsc1 instruction set is rvsc0 extended with the minimum additions required to support the full C calling convention: `lui` (to materialize absolute addresses) and `jalr` (to perform indirect jumps and function returns). These were determined by analyzing the RISC-V ABI @riscv-psabi and identifying which operations a conforming C calling convention unavoidably requires.
-
-For the remaining six targets (rvsc2--rvsc7), the instruction boundaries follow the natural extension hierarchy of the RISC-V specification @riscv-spec: from the RV32I base through 64-bit operations, integer multiply-divide, single- and double-precision floating-point, and atomic memory operations. No synthesis is required for these targets, as each progressively enables instructions already present in the upstream GCC backend; the contribution is the target triple registration and configuration.
-
-The full requirements are specified in Chapter 4.
+Requirements for each target were derived from two sources. For rvsc0 and rvsc1, the instruction boundaries are externally fixed by the Hennessy-Patterson textbook @patterson2020 and the minimum ABI requirements, respectively. For rvsc2--rvsc7, the boundaries follow the natural RISC-V extension hierarchy @riscv-spec. The complete requirements are specified in #chref(<ch-requirements>).
 
 == Synthesis Derivation and Implementation
 
@@ -376,19 +372,19 @@ The rvsc0 and rvsc1 targets require GCC to synthesize every instruction outside 
 
 The process begins by identifying the missing operation — an instruction that GCC's middle-end may legally request but that the target processor does not support. The synthesis algorithm is then derived and expressed as C pseudocode, which serves both as a correctness argument and as an unambiguous specification of the target behavior. The pseudocode is then lifted directly into a `define_expand` body in `riscv.md`, using GCC's RTL emit helpers to generate the equivalent sequence of native instructions. Correctness of the expansion is confirmed in two steps: the `-S` output is inspected to verify that no forbidden mnemonics appear, and the resulting program is executed on the Spike RISC-V ISA simulator @spike to confirm that the synthesized sequence produces the same result as the original instruction would have.
 
-This cycle was repeated for each operation that the compiler may emit for a bare-metal freestanding C program targeting rvsc0 or rvsc1. The derivations and the resulting implementation are described in Chapter 5.
+This cycle was repeated for each operation that the compiler may emit for a bare-metal freestanding C program targeting rvsc0 or rvsc1. The derivations and the resulting implementation are described in #chref(<ch-development>).
 
 == Validation
 
-Validation addresses both correctness requirements stated in Chapter 4: ISA compliance and behavioral equivalence.
+Validation addresses two correctness requirements defined in #chref(<ch-requirements>): ISA compliance and behavioral equivalence.
 
-ISA compliance is verified structurally: the compiler is invoked with `-S` on a test program that exercises a specific operation, and the output is scanned for any mnemonic not in the target's allowed set. This check is automated by the `run_tests.py` script, which compiles each test file and compares the emitted mnemonics against an allowlist specific to the target.
+ISA compliance is verified structurally by disassembling the compiled output and checking every mnemonic against a per-target allowlist.
 
-Behavioral equivalence is verified by compiling representative C programs and executing the resulting ELF binaries on Spike. Because Spike implements the full RV32I ISA, it can execute sc1-compiled programs (whose synthesis sequences are all valid RV32I) and confirm that return values and memory state match the expected output. The test programs currently cover arithmetic operations, control flow, function calls, pointer manipulation, and integer comparisons; integration of the official RISC-V test suite is planned as future work.
+Behavioral equivalence is verified by differential execution: the same C program is compiled by both the custom target and a reference RV32I compiler, and both binaries are executed on the Spike ISA simulator @spike; the test passes when both produce identical exit codes.
 
-Test results are presented in Chapter 6.
+Test results are presented in #chref(<ch-results>).
 
-= Requirements Specification
+= Requirements Specification <ch-requirements>
 // Define and describe the requirements of the work. The work may involve system development,
 // improvement of an existing system, process definition, techniques, procedures, or
 // another type of work agreed upon with the advisor.
@@ -588,9 +584,9 @@ AMO (atomic memory operations):
 - `amomin.w`, `amomin.d` — atomic signed minimum
 - `amominu.w`, `amominu.d` — atomic unsigned minimum
 
-= Development
+= Development <ch-development>
 
-The rvsc0 and rvsc1 targets restrict the instruction set available to the compiler (Chapter 4 specifies the complete native instruction set for each target). Every C construct the compiler may emit must be realized using only those native instructions; for every excluded instruction, GCC synthesizes an equivalent sequence at compile time. This chapter presents the tools and infrastructure used, the mathematical derivation and proof of each synthesis, the GCC implementation that makes the process transparent to the programmer, and the known limitations of each target.
+The rvsc0 and rvsc1 targets restrict the instruction set available to the compiler (#chref(<ch-requirements>) specifies the complete native instruction set for each target). Every C construct the compiler may emit must be realized using only those native instructions; for every excluded instruction, GCC synthesizes an equivalent sequence at compile time. This chapter presents the tools and infrastructure used, the mathematical derivation and proof of each synthesis, the GCC implementation that makes the process transparent to the programmer, and the known limitations of each target.
 
 == Technologies Used
 
@@ -775,15 +771,7 @@ In assembly using only the available instruction set:
     add   t5, rs1, x0    # t5 = rs1 (save before rd is zeroed; fixes rd/rs1 aliasing)
     addi  rd, x0, 0      # result = 0
     addi  t1, x0, 1      # out_mask = 1
-    addi  t2, x0, 1      # in_mask = 1
-    # compute in_mask = 1 << shift  (derived sll)
-    beq   t3, x0, loop   # if shift == 0, in_mask is already 1
-    add   t4, t3, x0     # t4 = shift (sll counter)
-sll_in:
-    add   t2, t2, t2     # in_mask <<= 1
-    addi  t4, t4, -1
-    beq   t4, x0, loop
-    beq   x0, x0, sll_in
+    [sll  t2, t1, t3]    # in_mask = 1 << shift
 loop:
     beq   t2, x0, done   # if in_mask == 0, all bits processed
     and   t4, t5, t2     # t4 = rs1 & in_mask  (use saved t5)
@@ -835,13 +823,7 @@ uint32_t sra(uint32_t x, uint32_t shift) {
 
     # Step 1: check sign bit of rs1 BEFORE srl (avoids rd/rs1 aliasing)
     addi  t0, x0, 1
-    addi  t3, x0, 31
-sign_sll:
-    add   t0, t0, t0
-    addi  t3, t3, -1
-    beq   t3, x0, sign_check
-    beq   x0, x0, sign_sll
-sign_check:              # t0 = 0x80000000
+    [sll  t0, t0, 31]    # t0 = 0x80000000
     and   t6, rs1, t0   # t6 = sign bit (saved in t6; srl uses t0–t5)
 
     # Step 2: logical right shift
@@ -858,12 +840,7 @@ sign_check:              # t0 = 0x80000000
     addi  t2, x0, -1    # t2 = 0xFFFFFFFF
     addi  t4, x0, 32
     sub   t4, t4, t3    # t4 = 32 - (shift & 31)
-ext_sll:
-    add   t2, t2, t2    # t2 <<= 1
-    addi  t4, t4, -1
-    beq   t4, x0, apply
-    beq   x0, x0, ext_sll
-apply:
+    [sll  t2, t2, t4]   # sign_mask = -1 << (32 - shift)
     or    rd, rd, t2
 done:
 ```
@@ -1343,11 +1320,11 @@ Both targets compile freestanding bare-metal C without a C standard library or a
 
 // TODO: investigate libgcc compilation
 
-= Results
+= Results <ch-results>
 
 == Tests
 
-Two independent test layers verify the two correctness requirements stated in Chapter 4: ISA compliance and behavioral equivalence.
+Two independent test layers verify the two correctness requirements stated in #chref(<ch-requirements>): ISA compliance and behavioral equivalence.
 
 === ISA Compliance Tests
 
@@ -1483,7 +1460,7 @@ For SLL with a shift amount $b$, the synthesis loop executes $b$ iterations of 4
 //    modest and predictable. The pedagogical value is that students can observe the
 //    concrete cost of each ISA restriction by comparing -S output between rvsc1 and rvsc3.
 
-= Conclusion
+= Conclusion <ch-conclusion>
 
 = References
 
