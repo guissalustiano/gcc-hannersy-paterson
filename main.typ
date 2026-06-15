@@ -564,122 +564,146 @@ Behavioral equivalence is verified by compiling representative C programs and ex
 
 Test results are presented in Chapter 6.
 
-= Desenvolvimento
+= Development
 
-== Instruction Derivation
-Using only the RVSC1 instruction set, all functionality required by the C language can be achieved. The chosen approach was to replace the emission of an unsupported instruction with an equivalent sequence whenever possible. In cases where no direct substitution exists, the change must be made at a different level /* to be investigated */.
-// TODO: discuss about use extra register and how this is applied and impact
+The rvsc0 and rvsc1 targets restrict the instruction set available to the compiler (Chapter 4 specifies the complete native instruction set for each target). Every C construct the compiler may emit must be realized using only those native instructions; for every excluded instruction, GCC synthesizes an equivalent sequence at compile time. This chapter presents the mathematical derivation and proof of each synthesis, followed by the GCC implementation that makes the process transparent to the programmer.
 
+== Synthesis Derivations <sc1-synthesis>
+
+*Assembly notation.* In the listings below, `rd`, `rs1`, and `rs2` denote the canonical destination and source registers. Registers `t0`–`t5` are temporaries chosen for readability. In the actual GCC machine description, all temporaries are allocated as pseudo-registers via `gen_reg_rtx(SImode)`; the register allocator maps them to physical registers, resolving aliasing conflicts automatically. The bracket notation `[op ...]` marks an instruction that is itself synthesized — its expansion is defined in the subsection that covers that operation.
 
 === Arithmetic
 
-Arithmetic operations only assign values to new registers and can be fully replaced by equivalent sequences.
+Arithmetic synthesis operations assign values only to registers and carry no memory side-effects; they can be replaced by equivalent sequences without additional constraints.
 
-==== not (R[rd] = ~R[rs1])
+==== Bitwise NOT <sc1-not>
 
-The `not` instruction is implemented in RISC-V as a pseudo-instruction using `xor`. Since `xor` is more expensive, as shown in the next section, `not` is instead derived from the `sub` instruction.
+The standard RISC-V pseudo-instruction `not rd, rs1` expands to `xori rd, rs1, -1`. Neither sc0 nor sc1 include `xori`, so a different derivation is required.
 
-The architecture uses two's complement, so $-x = ~x + 1$, meaning we can derive negation from subtraction as $~x = -x - 1$.
-
-In assembly:
+*Proof.* In two's complement, negation satisfies $-x = ~x + 1$ for all $x$. Rearranging: $~x = -x - 1$. Both subtraction from zero (`sub rd, x0, rs1`) and decrement by one (`addi rd, rd, -1`) are available in sc0 and sc1. $square$
 
 ```asm
 sub  rd, x0, rs1    # rd = -rs1
 addi rd, rd, -1     # rd = -rs1 - 1 = ~rs1
 ```
 
-The negation operation therefore costs two instructions and uses the same number of registers.
+#table(
+  columns: (1fr, 1fr, 1fr),
+  stroke: none,
+  inset: (y: 4pt),
+  [*Static instructions*], [*Extra registers*], [*Applies to*],
+  [2], [0], [rvsc0, rvsc1],
+)
 
-==== xor (R[rd] = R[rs1] ^ R[rs2])
+==== xor (R[rd] = R[rs1] ^ R[rs2]) <sc1-xor>
 
-The conjunctive normal form of `xor` is
+Neither sc0 nor sc1 include `xor` or `xori`.
 
-$a \^ b = (~a | ~b) & (a | b)$
+*Proof.* The De Morgan identity $a \^ b = ~(a & b) & (a | b)$ holds for all bits $a, b in {0, 1}$, as the following truth table confirms:
 
-As not cost 2 instruction, we can reduce the number of not's using D'morgan in the first factor
+#figure(
+  table(
+    columns: 6,
+    align: center,
+    [$a$], [$b$], [$a & b$], [$~(a & b)$], [$a | b$], [$~(a & b) & (a | b)$],
+    [0], [0], [0], [1], [0], [0],
+    [0], [1], [0], [1], [1], [1],
+    [1], [0], [0], [1], [1], [1],
+    [1], [1], [1], [0], [1], [0],
+  ),
+  caption: [Truth table establishing $~(a & b) & (a | b) = a \^ b$],
+)
 
-$a \^ b = ~(a & b) & (a | b)$
+The right-hand column matches $a \^ b$ in every row. Since the identity holds for each bit independently, it holds for all 32-bit words. $square$
 
-Which can be expressed in assembly as
-
+Using the derived `[not]` from @sc1-not:
 
 ```asm
-and t0, rs1, rs2    # t0 = rs1 & rs2
-not t0              # t0 = ~(rs1 & rs2)
-or  t2, rs1, rs2    # t2 = rs1 | rs2
-and rd, t0, t2      # rd = ~(rs1 & rs2) & (rs1 | rs2) = rs1 ^ rs2
+and   t0, rs1, rs2  # t0 = rs1 & rs2
+[not  t0, t0]       # t0 = ~(rs1 & rs2)  — 2 insns (Section 5.1.1)
+or    rd, rs1, rs2  # rd = rs1 | rs2
+and   rd, t0, rd    # rd = ~(rs1 & rs2) & (rs1 | rs2) = rs1 ^ rs2
 ```
 
-With the `not` replacement the real assembly output will be:
+#table(
+  columns: (1fr, 1fr, 1fr, 1fr),
+  stroke: none,
+  inset: (y: 4pt),
+  [*Listing*], [*With [not] expanded*], [*Extra registers*], [*Applies to*],
+  [4 insns], [6 insns], [1 (t0)], [rvsc0, rvsc1],
+)
 
-```asm
-and t0, rs1, rs2    # t0 = rs1 & rs2
-sub  t0, x0, t0     # t0 = -(rs1 & rs2)
-addi t0, t0, -1     # t0 = ~(rs1 & rs2)
-or  rd, rs1, rs2    # t2 = rs1 | rs2
-and rd, t0, rd      # rd = ~(rs1 & rs2) & (rs1 | rs2) = rs1 ^ rs2
-```
+==== Shifts: SLL, SRL, SRA <sc1-shifts>
 
-So the xor costs now 6 instructions and requires a extra register.
+Neither sc0 nor sc1 include any shift instruction. All three variants are synthesized from `add`, `addi`, `sub`, and `beq`.
 
-==== sll (R[rd] = R[rs1] << R[rs2])
+*Note on shift-count range.* The C standard (ISO C11 §6.5.7) states that shifting a 32-bit value by a count equal to or greater than 32 is undefined behavior; a conforming C program never triggers this case. The synthesis sequences nonetheless mask the shift count to the range $[0, 31]$ via `and t, rs2, 31`, matching the hardware behavior of native RV32I shift instructions. The synthesis therefore agrees with native hardware on all defined inputs and produces the same result on undefined inputs.
 
-Since $x << y = x * 2^y = x * 2 * 2 * 2 * ... * 2$ and $x * 2 = x + x$.
-This requires $y$ adds for the operation.
+===== Logical Left Shift (SLL) <sc1-sll>
 
-The C implementation would be
+`sll rd, rs1, rs2` computes $"rd" = "rs1" << "rs2"$ (zero-fill from the right).
+
+*Proof by induction.* Let $"sll"(x, n)$ denote $x$ left-shifted by $n$ positions. Claim: $"sll"(x, n) = x dot 2^n$ (modulo $2^32$).
+
+- _Base case_ $(n = 0)$: $"sll"(x, 0) = x = x dot 2^0$. $checkmark$
+- _Inductive step_: Assume $"sll"(x, n) = x dot 2^n$. Then $"sll"(x, n+1) = "sll"(x, n) + "sll"(x, n) = 2 dot x dot 2^n = x dot 2^(n+1)$. $checkmark$
+
+The synthesis implements this recursion as a count-down loop in which each iteration doubles `rd` via `add rd, rd, rd`. $square$
 
 ```c
-  uint32_t sll(uint32_t rs1, uint32_t rs2) {
+uint32_t sll(uint32_t rs1, uint32_t rs2) {
+    rs2 &= 31u;           // C11 §6.5.7: mask to [0, 31]
     uint32_t rd = rs1;
-    for (uint32_t i = 0; i < rs2; i++) {
-      rd += rd;
-    }
+    for (uint32_t i = 0; i < rs2; i++) rd += rd;
     return rd;
-  }
+}
 ```
-
-And in assembly:
 
 ```asm
 # rd = rs1 << rs2
-    add   t1, rs2, x0    # t1 = rs2 (save shift count before rd may alias rs2)
+    add   t1, rs2, x0    # t1 = rs2 (save shift count; rd may alias rs2)
     add   rd, rs1, x0    # rd = rs1
     beq   t1, x0, done   # if rs2 == 0, no shift needed
 loop:
-    add   rd, rd, rd     # rd = rd * 2  (rd <<= 1)
-    addi  t1, t1, -1     # decrement counter
-    beq   t1, x0, done   # if counter == 0, done
-    beq   x0, x0, loop   # unconditional branch back (x0 == x0 always)
+    add   rd, rd, rd     # rd <<= 1
+    addi  t1, t1, -1
+    beq   t1, x0, done
+    beq   x0, x0, loop
 done:
 ```
 
-So the instruction take $3 + 4*b$, where $b$ is the shift number, which in 32bits architecture can be at most 32, so the worst case here is 131 instructions.
+Let $b$ denote the masked shift amount. The loop executes $b$ iterations of 4 instructions each, with 3 setup instructions.
 
-// TODO: talk about c, what happen if a << 33 in a 31 architecture. I think is UB, but need to check.
+#table(
+  columns: (1fr, 1fr, 1fr, 1fr),
+  stroke: none,
+  inset: (y: 4pt),
+  [*Formula*], [*Min (b=0)*], [*Max (b=31)*], [*Extra registers*],
+  [$3 + 4b$], [3], [127], [1 (t1)],
+)
 
 
-==== srl (R[rd] = R[rs1] >> R[rs2])
-For the logical right shift, the solution is to iterate over the bits and write each one to its new position using bit manipulation. The C implementation is shown below.
+===== Logical Right Shift (SRL) <sc1-srl>
+
+`srl rd, rs1, rs2` computes $"rd" = "rs1" >> "rs2"$ (zero-fill from the left). A right shift cannot be synthesized by repeated halving, because integer division by two would floor rather than truncate, producing incorrect results for odd values. Instead, output bit $i$ is copied from input bit $i + s$ using two single-bit masks that scan upward together.
+
+*Proof of correctness.* The algorithm maintains `out_mask` (scanning output bits from 0 upward) and `in_mask` (scanning input bits from $s$ upward). At each step, if `x & in_mask ≠ 0`, input bit $i+s$ is set and the algorithm sets `result |= out_mask`. Both masks then advance (`<<= 1`). The loop terminates when `in_mask` overflows past bit 31 (becoming 0), meaning all input positions at or above $s$ have been processed. Output bits 0 through $31 - s$ are set from the corresponding input bits; bits above $31 - s$ are never set (their input positions have overflowed), correctly implementing zero-fill. $square$
 
 ```c
 uint32_t srl(uint32_t x, uint32_t shift) {
-    shift = shift & 31u;
+    shift = shift & 31u;      // C11 §6.5.7: mask to [0, 31]
     uint32_t result   = 0;
     uint32_t out_mask = 1u;
-    uint32_t in_mask  = 1u << shift;
+    uint32_t in_mask  = 1u << shift;   // [sll]
     while (in_mask != 0) {
-        if ((x & in_mask) != 0) {
-            result = result | out_mask;
-        }
-        out_mask = out_mask << 1;
-        in_mask  = in_mask  << 1;
+        if ((x & in_mask) != 0) result |= out_mask;
+        out_mask <<= 1;   // [sll]
+        in_mask  <<= 1;   // [sll]
     }
     return result;
 }
 ```
 
-// shift = shift & 31u; is related to the C spec — worth verifying and mentioning.
 In assembly using only the available instruction set:
 
 ```asm
@@ -710,7 +734,25 @@ skip:
 done:
 ```
 
-==== sra (R[rd] = R[rs1] >> R[rs2])
+The main loop runs $(32 - s)$ iterations where $s$ is the masked shift amount; each iteration costs 4–5 instructions. Initialization and the `in_mask` pre-shift add overhead proportional to $s$.
+
+#table(
+  columns: (1fr, 1fr, 1fr),
+  stroke: none,
+  inset: (y: 4pt),
+  [*Worst case*], [*Extra registers*], [*Applies to*],
+  [~170 insns], [5 (t0–t5)], [rvsc0, rvsc1],
+)
+
+===== Arithmetic Right Shift (SRA) <sc1-sra>
+
+`sra rd, rs1, rs2` computes the arithmetic right shift: identical to `srl` but vacated upper bits are filled with the sign bit rather than zero.
+
+*Proof.* Let $s$ be the masked shift count and $b_{31}$ the sign bit of `rs1`. Arithmetic right shift sets output bit $i$ to input bit $\min(i+s, 31)$. For $i \leq 31-s$ this equals the `srl` result. For $i > 31-s$, all upper bits equal $b_{31}$.
+
+If $b_{31} = 0$, the `srl` result already has all upper bits zero; no correction is needed.
+
+If $b_{31} = 1$, the upper $s$ bits must be 1. The mask $(-1) << (32 - s)$ has exactly the top $s$ bits set, since $-1$ in two's complement is all-ones, and left-shifting by $k$ clears the low $k$ bits. OR-ing this mask into the `srl` result sets the upper $s$ bits correctly. $square$
 
 ```c
 uint32_t sra(uint32_t x, uint32_t shift) {
@@ -761,126 +803,132 @@ apply:
 done:
 ```
 
-=== Branch
+*Cost*: One full `[srl]` expansion plus ~25 instructions for sign-bit extraction and sign-mask construction; worst case approximately 200 instructions; 6 extra registers.
 
-==== slt
+=== Comparisons <sc1-comparisons>
 
-- need to handle overflow
-- slt(a, b) = ((a XOR b) < 0) ? (a < 0) : ((a - b) < 0)
+==== SLT and SLTU <sc1-slt>
+
+`slt rd, rs1, rs2` sets `rd = 1` if `rs1 < rs2` (signed comparison), else `rd = 0`. Neither sc0 nor sc1 include `slt` or `slti`.
+
+*Proof.* Let `diff = rs1 - rs2` (32-bit two's complement). Without overflow, the sign bit of `diff` correctly indicates the comparison: `diff[31] = 1` iff `rs1 < rs2`. Signed overflow occurs when the operands have different signs and the result has the same sign as `rs2`. The expression $"overflow" = ("rs1" xor "rs2") & ("rs1" xor "diff")$ has MSB 1 exactly when overflow occurred. XOR-ing `diff` with `overflow` flips the sign bit iff overflow occurred, yielding the corrected result. Verification by case analysis on the sign bits of $a = "rs1"$ and $b = "rs2"$:
+
+- $(a >= 0, b >= 0)$: subtraction cannot overflow; $"overflow"[31] = 0$; result = `diff[31]`. Correct.
+- $(a < 0, b < 0)$: same analysis. Correct.
+- $(a >= 0, b < 0)$: $a >= b$ always; result must be 0. If overflow: `diff[31] = 1` (wrong). $(a xor b)[31] = 1$ (signs differ); $(a xor "diff")[31] = 1$; so $"overflow"[31] = 1$ and $"corrected"[31] = 1 xor 1 = 0$. Correct.
+- $(a < 0, b >= 0)$: $a < b$ always; result must be 1. If underflow: `diff[31] = 0` (wrong); $"overflow"[31] = 1$; $"corrected"[31] = 0 xor 1 = 1$. Correct. If no underflow: `diff[31] = 1`; $"overflow"[31] = 0$; $"corrected"[31] = 1$. Correct. $square$
 
 ```c
 uint32_t slt(uint32_t a, uint32_t b) {
     uint32_t diff      = a - b;
     uint32_t overflow  = (a ^ b) & (a ^ diff);   // MSB = 1 iff signed overflow
-    uint32_t corrected = diff ^ overflow;        // fix sign bit when it lied
+    uint32_t corrected = diff ^ overflow;
 
     return corrected >> 31;
 }
 ```
 
 ```asm
-sub  t0, rs1, rs2   # diff      = rs1 - rs2
-xor  t1, rs1, rs2   # t1        = rs1 ^ rs2          (derived)
-xor  t2, rs1, t0    # t2        = rs1 ^ diff          (derived)
-and  t1, t1, t2     # overflow  = (rs1^rs2) & (rs1^diff)
-xor  t0, t0, t1     # corrected = diff ^ overflow     (derived; t1,t2 now free)
-[srl rd,  t0, 31]   # rd        = corrected >> 31     (derived)
+sub   t0, rs1, rs2   # diff = rs1 - rs2
+[xor  t1, rs1, rs2]  # t1 = rs1 ^ rs2  (derived)
+[xor  t2, rs1, t0]   # t2 = rs1 ^ diff  (derived)
+and   t1, t1, t2     # overflow = (rs1^rs2) & (rs1^diff)
+[xor  t0, t0, t1]    # corrected = diff ^ overflow  (derived)
+[srl  rd,  t0, 31]   # rd = corrected >> 31  (derived)
 ```
 
-==== sltu
+`sltu rd, rs1, rs2` performs the same comparison treating both operands as unsigned.
+
+*Proof.* `rs1 < rs2` (unsigned) iff the subtraction `rs1 - rs2` generates a borrow at the MSB. A borrow is _generated_ at bit $i$ when `rs1[i] = 0` and `rs2[i] = 1`, captured by `~rs1 & rs2`. A borrow is _propagated_ when `rs1[i] = rs2[i]` and a borrow arrived from below, captured by `~(rs1 ^ rs2) & diff`. The MSB of their union is 1 iff `rs1 < rs2` (unsigned). $square$
 
 ```c
 uint32_t sltu(uint32_t a, uint32_t b) {
     uint32_t diff   = a - b;
-    // borrow generated where a=0,b=1; propagated where a==b and diff borrows from below
     uint32_t borrow = (~a & b) | (~(a ^ b) & diff);
     return borrow >> 31;
 }
 ```
 
 ```asm
-sub   t0, rs1, rs2   # diff      = rs1 - rs2
-not   t1, rs1        # t1        = ~rs1               (derived)
-and   t2, t1, rs2    # t2        = ~rs1 & rs2         (borrow generated)
-xor   t3, rs1, rs2   # t3        = rs1 ^ rs2          (derived)
-not   t3, t3         # t3        = ~(rs1 ^ rs2)       (derived)
-and   t3, t3, t0     # t3        = ~(rs1^rs2) & diff  (borrow propagated)
-or    t2, t2, t3     # borrow    = generated | propagated
-[srl  rd,  t2, 31]   # rd        = borrow >> 31       (derived)
+sub   t0, rs1, rs2   # diff = rs1 - rs2
+[not  t1, rs1]       # t1 = ~rs1  (derived)
+and   t2, t1, rs2    # t2 = ~rs1 & rs2  (borrow generated)
+[xor  t3, rs1, rs2]  # t3 = rs1 ^ rs2  (derived)
+[not  t3, t3]        # t3 = ~(rs1 ^ rs2)  (derived)
+and   t3, t3, t0     # t3 = ~(rs1^rs2) & diff  (borrow propagated)
+or    t2, t2, t3     # borrow = generated | propagated
+[srl  rd,  t2, 31]   # rd = borrow >> 31  (derived)
 ```
 
+#table(
+  columns: (1fr, 1fr, 1fr),
+  stroke: none,
+  inset: (y: 4pt),
+  [*Operation*], [*Approx. instructions (full expansion)*], [*Extra registers*],
+  [`slt`], [~60], [3 (t0–t2)],
+  [`sltu`], [~70], [4 (t0–t3)],
+)
 
-==== Bne
+
+==== BNE <sc1-bne>
+
+`bne rs1, rs2, target` jumps iff `rs1 ≠ rs2`.
+
+*Equivalence.* `rs1 ≠ rs2` iff `rs1 - rs2 ≠ 0`. If the difference is zero, `beq` falls through (skip the jump); otherwise an unconditional `beq x0, x0, target` is taken.
 
 ```asm
 sub  t0, rs1, rs2
-beq  t0, x0, skip    # rs1 == rs2, skip the jump
-beq  x0, x0, target
+beq  t0, x0, skip    # rs1 == rs2: skip
+beq  x0, x0, target  # unconditional jump
 skip:
 ```
 
-==== Bge - Branch greater than or equal
+*Cost*: 3 instructions; 1 extra register.
+
+==== BLT, BGE, BLTU, BGEU <sc1-ordered-branches>
+
+Each ordered branch is synthesized using `[slt]` or `[sltu]` followed by a `beq` or `bne` test.
+
+*Equivalence.* A "branch if less-than" is equivalent to computing the comparison into a register and branching on that register being nonzero; "branch if greater-than-or-equal" branches when the comparison is zero (i.e., the "not less-than" case).
+
+#figure(
+  table(
+    columns: (auto, auto, 1fr),
+    align: left,
+    [*Branch*], [*Condition*], [*Synthesis*],
+    [`blt rs1, rs2, L`],  [`rs1 < rs2` (signed)],    [`[slt t, rs1, rs2]`; `bne t, x0, L`],
+    [`bge rs1, rs2, L`],  [`rs1 >= rs2` (signed)],   [`[slt t, rs1, rs2]`; `beq t, x0, L`],
+    [`bltu rs1, rs2, L`], [`rs1 < rs2` (unsigned)],  [`[sltu t, rs1, rs2]`; `bne t, x0, L`],
+    [`bgeu rs1, rs2, L`], [`rs1 >= rs2` (unsigned)], [`[sltu t, rs1, rs2]`; `beq t, x0, L`],
+  ),
+  caption: [Ordered branch syntheses via `[slt]` and `[sltu]`],
+)
+
+=== Immediate Variants <sc1-immediates>
+
+The instructions `andi`, `ori`, `xori`, `slli`, `srli`, `srai`, `slti`, and `sltiu` encode a register together with a 12-bit signed immediate. Neither sc0 nor sc1 support any of these forms. Each is synthesized by loading the immediate into a temporary register via `addi` and calling the corresponding register–register variant:
 
 ```asm
-# with -mno-slt: synthesize slt into t0, then beq t0, x0, target
-[slt t0, rs1, rs2]  # t0 = 1 if rs1 < rs2, else 0  (derived)
-beq  t0, x0, target
+# Example: andi rd, rs1, imm  →
+addi  t0, x0, imm
+and   rd, rs1, t0
 ```
 
-==== Blt - Branch less than
+Since `addi` encodes 12-bit signed immediates (range −2048 to 2047) and all of these instruction forms share the same I-type 12-bit field, every immediate fits directly.
 
-```asm
-# with -mno-slt: synthesize slt into t0, then bne t0, x0, target
-[slt t0, rs1, rs2]  # t0 = 1 if rs1 < rs2, else 0  (derived)
-bne  t0, x0, target
-```
+*Cost*: 1 extra `addi` instruction and 1 extra register per immediate variant.
 
-==== Bgeu
+=== Loads <sc1-loads>
 
-```asm
-# with -mno-slt: synthesize sltu into t0, then beq t0, x0, target
-[sltu t0, rs1, rs2]  # t0 = 1 if rs1 < rs2 (unsigned), else 0  (derived)
-beq  t0, x0, target
-```
+==== LUI (rvsc0 only) <sc0-lui>
 
-==== Bltu
+`lui rd, imm20` sets `rd = imm20 << 12`. The instruction is native in rvsc1; synthesis is required only for rvsc0. Since rvsc0 also lacks `jalr`, function calls are impossible; LUI synthesis is primarily needed to materialize large constants or absolute memory addresses.
 
-```asm
-# with -mno-slt: synthesize sltu into t0, then bne t0, x0, target
-[sltu t0, rs1, rs2]  # t0 = 1 if rs1 < rs2 (unsigned), else 0  (derived)
-bne  t0, x0, target
-```
+*Derivation.* Since `addi` encodes only 12-bit signed immediates (range −2048 to 2047), a 20-bit immediate cannot be loaded in one instruction. Splitting $"imm20"$ into two 10-bit halves $"hi" = "imm20"[19:10]$ and $"lo" = "imm20"[9:0]$ (each in $[0, 1023]$):
 
-=== Immediate
-- (ORI, ANDI, SLLI, SRAI, SRLI, XORI, SLTI, SLTIU)
-Only uses ADDI to load a value into a temporary register and then call the non-immediate variant.
-
-==== SLTI / SLTIU
-
-
-```asm
-li    t, imm          # load immediate into register
-slt   rd, rs1, t      # slti rd, rs1, imm  →  slt rd, rs1, t
-sltu  rd, rs1, t      # sltiu rd, rs1, imm →  sltu rd, rs1, t
-```
-
-
-=== Load
-
-==== LUI
-
-`lui rd, imm20` sets `rd = imm20 << 12`, placing a 20-bit value in the upper bits of a register.
-Two derivation strategies are considered; which one GCC can produce is left for future investigation.
+$ "rd" = "imm20" << 12 = (("hi" << 10) | "lo") << 12 $
 
 ===== Approach 1: addi + derived sll
-
-Since `addi` only encodes 12-bit signed immediates (range −2048 to 2047), a 20-bit immediate cannot be loaded in one instruction.
-Split `imm20` into two 10-bit halves that each fit safely in a positive `addi` immediate (0–1023), reconstruct the value with `or`, then shift left by 12.
-
-```
-imm20 = hi × 2^10 + lo       where hi = imm20[19:10],  lo = imm20[9:0]
-rd    = imm20 << 12  =  (hi << 22) | (lo << 12)
-```
 
 ```asm
 addi  rd, x0, hi     # rd = upper 10 bits of imm20  (fits in addi: 0–1023)
@@ -911,7 +959,11 @@ This requires that `pool_entry` fits in a 12-bit signed offset from `x0` (addres
 
 ==== LB, LBU, LH, LHU <sc1-lb-synthesis>
 
-Since the processor only supports `lw`, every byte or halfword load is synthesized in four steps: align the address to a word boundary, load the word, extract the target unit by logical right shift, and finally sign-extend (`sra`) or zero-extend (`srl`). This algorithm is emitted at runtime — it does not assume the offset is constant at compile time.
+Since sc1 supports only `lw` (32-bit word loads), every byte or halfword load is synthesized in four steps: align the address to a word boundary, load the word, extract the target unit by shift, and sign-extend or zero-extend.
+
+*Proof of correctness.* The expression `addr & ~3u` clears the two low-order bits, yielding the address of the word that contains the byte or halfword at `addr`. The unit's position within the word is `addr & MASK` (MASK = 3 for bytes, 2 for halfwords), and its bit offset is `(addr & MASK) * 8` (values 0, 8, 16, 24 for bytes; 0 or 16 for halfwords). Right-shifting the word by this amount moves the target unit to bits $[N-1:0]$ where $N$ is 8 or 16. A subsequent shift pair of $32-N$ bits — left then right — isolates the unit and performs either sign extension (arithmetic right shift, for `lb`/`lh`) or zero extension (logical right shift, for `lbu`/`lhu`). This is correct for any address alignment because the memory model is little-endian and the bit offset exactly encodes the unit's position within the word. $square$
+
+This algorithm is emitted at runtime — it does not assume the offset is constant at compile time.
 
 ```c
 /* Common algorithm for lb/lbu/lh/lhu */
@@ -952,13 +1004,26 @@ and   t0, rs1, t0         # t0 = rs1 & 2  (0 or 2: which halfword)
 [sra  rd,  t1, 16]        # sign-extend → lh  (srl for lhu)
 ```
 
-Since shifts in sc1 are synthesized via `add`/`beq` loops, the total cost of a byte load reaches ~70–80 instructions. The high cost is intentional: it demonstrates to students the value of having `lb`/`lbu` as native instructions.
+Since sc1 shifts are themselves synthesized via `add`/`beq` loops, each byte load expands to approximately 70–80 instructions. This cost is intentional: it makes the value of native `lb`/`lbu` instructions tangible to the student building the processor.
 
-=== Store
+#table(
+  columns: (1fr, 1fr, 1fr),
+  stroke: none,
+  inset: (y: 4pt),
+  [*Operation*], [*Approx. instructions*], [*Extra registers*],
+  [`lb`, `lbu`], [~70–80], [2 (t0, t1)],
+  [`lh`, `lhu`], [~70–80], [2 (t0, t1)],
+)
 
-==== SB
+=== Stores <sc1-stores>
 
-A byte store is implemented as a read-modify-write operation: load the word containing the target byte, clear the byte's bits, insert the new value, and write back. Since the base pointer is unknown at compile time, the bit offset is computed at runtime.
+==== SB and SH <sc1-sb>
+
+A byte store (`sb`) or halfword store (`sh`) is implemented as a read-modify-write: load the word containing the target location, clear the target bits, insert the new value, and write back. The bit offset is computed at runtime since the base address is unknown at compile time.
+
+*Proof of correctness.* Let `word` be the current word at the aligned address, `mask` the bit-field covering the target unit (e.g., `0xFF << shift` for a byte), and `val` the new value to write. The expression $("word" & ~"mask") | ("val" & "mask")$ replaces exactly the target bits with `val` while preserving all others. For each bit $i$: if `mask[i] = 1`, then `(word & ~mask)[i] = 0` and `(val & mask)[i] = val[i]`, yielding `val[i]`; if `mask[i] = 0`, then `(val & mask)[i] = 0` and `(word & ~mask)[i] = word[i]`, yielding `word[i]`. $square$
+
+A byte store is implemented as:
 
 ```c
 void sb(uint8_t *addr, uint32_t rs2) {
@@ -975,137 +1040,197 @@ void sb(uint8_t *addr, uint32_t rs2) {
 
 ```asm
 # sb rs2, 0(rs1)   — address in rs1, byte position unknown at compile-time
-li    t0, -4
+addi  t0, x0, -4
 and   t3, rs1, t0           # t3 = rs1 & -4  (word-aligned)
-li    t0, 3
+addi  t0, x0, 3
 and   t0, rs1, t0           # t0 = rs1 & 3  (byte_pos: 0–3)
 add   t0, t0, t0            # \
-add   t0, t0, t0            #  t0 = byte_pos * 8  (bit shift; synthesized sll)
+add   t0, t0, t0            #  t0 = byte_pos * 8  (constant-3 sll; no loop needed)
 add   t0, t0, t0            # /
 lw    t1, 0(t3)             # t1 = old word
-li    t2, 255               # t2 = 0xFF
-[sll  t2, t2, t0]           # t2 = 0xFF << shift  (mask; synthesized variable sll)
-not   t2, t2                # t2 = ~mask  (synthesized)
+addi  t2, x0, 255           # t2 = 0xFF
+[sll  t2, t2, t0]           # t2 = 0xFF << shift  (mask)
+[not  t2, t2]               # t2 = ~mask  — 2 insns (Section 5.2.1)
 and   t1, t1, t2            # t1 = old_word & ~mask  (clear target byte)
-li    t2, 255
+addi  t2, x0, 255
 and   t2, rs2, t2           # t2 = rs2 & 0xFF  (isolate input byte)
-[sll  t2, t2, t0]           # t2 = byte_value << shift  (position; synthesized variable sll)
+[sll  t2, t2, t0]           # t2 = byte_value << shift
 or    t1, t1, t2            # t1 = word with byte inserted
 sw    t1, 0(t3)             # write back
 ```
 
-Each `sb` costs one `lw` (2 cycles) plus one `sw` (5 cycles) = 7 memory cycles, plus the variable-shift synthesis sequence.
+#table(
+  columns: (1fr, 1fr, 1fr),
+  stroke: none,
+  inset: (y: 4pt),
+  [*Extra memory ops*], [*Approx. instructions (full expansion)*], [*Extra registers*],
+  [1 lw + 1 sw], [~100], [3 (t0–t2)],
+)
 
-==== SH
-
-Same read-modify-write pattern as `sb`, but for a 16-bit halfword. The halfword position within the word (`addr & 2`, yielding 0 or 2) and the bit offset (0 or 16) are computed at runtime. The constant 0xFFFF is materialized with `lui + addi` (it exceeds the 12-bit immediate range).
+The `sh` synthesis follows the same read-modify-write pattern as `sb`, with `MASK = 2` and mask constant `0xFFFF`. Since `0xFFFF` exceeds the 12-bit `addi` range, it is materialized via `lui 0x10; addi -1`.
 
 ```c
 void sh(uint16_t *addr, uint32_t rs2) {
-    uint32_t aligned_addr = (uint32_t)addr & ~3u;    // addr & -4
-    uint32_t hw_pos       = (uint32_t)addr & 2u;     // runtime: 0 or 2
-    uint32_t shift        = hw_pos * 8u;              // runtime: 0 or 16
-    uint32_t old_word     = *(uint32_t *)aligned_addr;      // lw
-    uint32_t hw_mask      = 0xFFFFu << shift;               // [sll] runtime shift
-    uint32_t new_hw       = (rs2 & 0xFFFFu) << shift;       // [sll] runtime shift
-    uint32_t new_word     = (old_word & ~hw_mask) | new_hw;
-    *(uint32_t *)aligned_addr = new_word;                    // sw
+    uint32_t aligned = (uint32_t)addr & ~3u;
+    uint32_t shift   = ((uint32_t)addr & 2u) * 8u;   // runtime: 0 or 16
+    uint32_t word    = *(uint32_t *)aligned;
+    uint32_t mask    = 0xFFFFu << shift;
+    uint32_t new_w   = (word & ~mask) | ((rs2 & 0xFFFFu) << shift);
+    *(uint32_t *)aligned = new_w;
 }
 ```
 
 ```asm
-# sh rs2, 0(rs1)   — address in rs1, halfword position unknown at compile-time
-li    t0, -4
+# sh rs2, 0(rs1)
+addi  t0, x0, -4
 and   t3, rs1, t0           # t3 = rs1 & -4  (word-aligned)
-li    t0, 2
+addi  t0, x0, 2
 and   t0, rs1, t0           # t0 = rs1 & 2  (hw_pos: 0 or 2)
 add   t0, t0, t0            # \
-add   t0, t0, t0            #  t0 = hw_pos * 8  (bit shift: 0 or 16; synthesized sll)
+add   t0, t0, t0            #  t0 = hw_pos * 8  (0 or 16; constant-3 sll)
 add   t0, t0, t0            # /
 lw    t1, 0(t3)             # t1 = old word
-li    t2, 65535             # t2 = 0xFFFF  (lui 0x10 + addi -1)
-[sll  t2, t2, t0]           # t2 = 0xFFFF << shift  (mask; synthesized variable sll)
-not   t2, t2                # t2 = ~mask  (synthesized)
-and   t1, t1, t2            # t1 = old_word & ~mask  (clear target halfword)
-li    t2, 65535
-and   t2, rs2, t2           # t2 = rs2 & 0xFFFF  (isolate input halfword)
-[sll  t2, t2, t0]           # t2 = hw_value << shift  (position; synthesized variable sll)
+lui   t2, 0x10              # \
+addi  t2, t2, -1            #  t2 = 0xFFFF
+[sll  t2, t2, t0]           # t2 = 0xFFFF << shift  (mask)
+[not  t2, t2]               # t2 = ~mask  — 2 insns (Section 5.2.1)
+and   t1, t1, t2            # t1 = old_word & ~mask
+lui   t2, 0x10
+addi  t2, t2, -1            # t2 = 0xFFFF
+and   t2, rs2, t2           # t2 = rs2 & 0xFFFF
+[sll  t2, t2, t0]           # t2 = hw_value << shift
 or    t1, t1, t2            # t1 = word with halfword inserted
 sw    t1, 0(t3)             # write back
 ```
 
-Each `sh` costs one `lw` (2 cycles) plus one `sw` (5 cycles) = 7 memory cycles, plus the variable-shift synthesis sequence.
+#table(
+  columns: (1fr, 1fr, 1fr),
+  stroke: none,
+  inset: (y: 4pt),
+  [*Extra memory ops*], [*Approx. instructions (full expansion)*], [*Extra registers*],
+  [1 lw + 1 sw], [~105], [3 (t0–t2)],
+)
 
-=== Jump
+=== Control Flow <sc1-jump>
 
-==== JAL
-jalr + lui + label after calll
+==== JAL <sc1-jal>
 
-So instead
-```asm
-li  a0, 3
-jal ra, double
+`jal ra, target` saves the return address (`PC + 4`) into `ra` and jumps to `target`. rvsc1 does not support `auipc`-based PC-relative addressing; `jal` must therefore be synthesized from `lui`, `addi`, and `jalr`.
 
-ebreak  # stop execution
-
-double:
-    add  a0, a0, a0
-    jalr zero, 0(ra)
-```
-
-we will need
+*Equivalence.* The semantics of `jal ra, target` are: $"ra" <- "PC" + 4$; $"PC" <- "target"$. Since `lui`+`addi` can materialize any 32-bit absolute address, the two effects can be split: materialize the return address into `ra` before the jump, then jump to `target` via `jalr`.
 
 ```asm
-    li      a0, 3
-    li      ra, back_double1     # assembler: lui ra, %hi(...); addi ra, ra, %lo(...)
-    li      t0, double           # same expansion
-    jalr    zero, 0(t0)
-back_double1:
-    ebreak
-
-double:
-    add     a0, a0, a0
-    jalr    zero, 0(ra)
+# jal ra, target  →
+lui   ra,  %hi(back)       # ra[31:12] = upper bits of (PC+4)
+addi  ra,  ra, %lo(back)   # ra = PC+4
+lui   t0,  %hi(target)
+addi  t0,  t0, %lo(target)
+jalr  x0,  0(t0)           # PC ← target; ra already holds return address
+back:
 ```
 
+*Cost*: 5 instructions per call site; 1 extra register (`t0`).
 
+== GCC Implementation <sc1-gcc-impl>
 
-== Implementation
+=== Target Flags <sc1-flags>
 
-=== GCC overfiev
+Each synthesized instruction corresponds to a Boolean flag declared in `gcc/config/riscv/riscv.opt`. When a flag is zero, the corresponding `define_insn` condition evaluates to false (suppressing native instruction emission) while the `define_expand` synthesis path fires and calls `DONE`. @tbl-flags lists all flags added for this project.
 
-- GCC architecture
-- GCC backends and targets
+#figure(
+  table(
+    columns: (auto, auto, auto),
+    align: left,
+    [*Flag*], [*Macro*], [*Disabled for*],
+    [`-mfence`],  [`TARGET_FENCE`],  [rvsc0, rvsc1, rvsc2],
+    [`-mauipc`],  [`TARGET_AUIPC`],  [rvsc0, rvsc1],
+    [`-mshift`],  [`TARGET_SHIFT`],  [rvsc0, rvsc1],
+    [`-mxor`],    [`TARGET_XOR`],    [rvsc0, rvsc1],
+    [`-mori`],    [`TARGET_ORI`],    [rvsc0, rvsc1],
+    [`-mandi`],   [`TARGET_ANDI`],   [rvsc0, rvsc1],
+    [`-mbne`],    [`TARGET_BNE`],    [rvsc0, rvsc1],
+    [`-mslt`],    [`TARGET_SLT`],    [rvsc0, rvsc1],
+    [`-mslti`],   [`TARGET_SLTI`],   [rvsc0, rvsc1],
+    [`-mblt`],    [`TARGET_BLT`],    [rvsc0, rvsc1],
+    [`-mbge`],    [`TARGET_BGE`],    [rvsc0, rvsc1],
+    [`-mbltu`],   [`TARGET_BLTU`],   [rvsc0, rvsc1],
+    [`-mbgeu`],   [`TARGET_BGEU`],   [rvsc0, rvsc1],
+    [`-mbyte`],   [`TARGET_BYTE`],   [rvsc0, rvsc1],
+    [`-mhalf`],   [`TARGET_HALF`],   [rvsc0, rvsc1],
+  ),
+  caption: [Target option flags added for this project],
+) <tbl-flags>
 
-=== GCC Machine Description Files
+All flags have `Init(1)` (enabled by default). The per-target header (`rvscN.h`) disables the appropriate subset via `CC1_SPEC`.
 
-- Explain what are machine description
-- Explain where is the changes
-- Give some examples
+=== Machine Description Patterns <sc1-md>
 
-=== GCC flags and target configuration
+The GCC machine description (`riscv.md`) uses two complementary constructs per synthesized operation: a `define_insn` guarded by `TARGET_XYZ` that emits the native instruction when the flag is enabled, and a `define_expand` guarded by `!TARGET_XYZ` that emits the synthesis sequence and calls `DONE`, preventing GCC from falling through to the native insn. The XOR synthesis illustrates the pattern:
 
-- List all flags create for each implementation
-- Show how this flags are configured
+```scheme
+;; Native XOR — emitted only when TARGET_XOR is true
+(define_insn "xorsi3"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+        (xor:SI (match_operand:SI 1 "register_operand" "r")
+                (match_operand:SI 2 "register_operand" "r")))]
+  "TARGET_XOR"
+  "xor\t%0,%1,%2")
 
-
-```sh
-rvsc2-unknown-elf-gcc program.c -o program
+;; XOR synthesis — fires when !TARGET_XOR
+(define_expand "xorsi3"
+  [(set (match_operand:SI 0 "register_operand")
+        (xor:SI (match_operand:SI 1 "register_operand")
+                (match_operand:SI 2 "register_operand")))]
+  "!TARGET_XOR"
+{
+  rtx t0 = gen_reg_rtx (SImode);
+  emit_insn (gen_andsi3 (t0, operands[1], operands[2]));
+  emit_insn (gen_one_cmplsi2 (t0, t0));      /* [not] */
+  emit_insn (gen_iorsi3 (operands[0], operands[1], operands[2]));
+  emit_insn (gen_andsi3 (operands[0], t0, operands[0]));
+  DONE;
+})
 ```
 
-This is equivalent to:
+The `DONE` call signals that the expansion body has fully handled the operation; GCC does not attempt to match the `define_insn` afterwards.
 
-```sh
-riscv32-unknown-elf-gcc program.c -o program \
-    -march=rv32i -mabi=ilp32 \
-    -mno-fence
+=== Worked Example: XOR in C to Assembly <sc1-example>
+
+The following traces how `unsigned f(unsigned a, unsigned b) { return a ^ b; }` is compiled by `rvsc1-unknown-elf-gcc -S -O1`:
+
++ *Frontend*: parses `a ^ b` to an AST `XOR_EXPR` node.
++ *GIMPLE*: `_1 = a ^ b; return _1;` — language-independent SSA form.
++ *RTL lowering*: GCC attempts to emit `xorsi3`. `TARGET_XOR` is 0 (rvsc1 disables XOR), so the `define_expand` synthesis body fires.
++ *Expansion*: the body allocates a pseudo-register, emits `andsi3`, `one_cmplsi2`, `iorsi3`, and `andsi3` into the RTL stream, then calls `DONE`.
++ *Register allocation*: GCC maps pseudo-registers to physical registers (`a0`, `a1`, `t0`) such that no `xor` instruction appears.
++ *Assembly output*: inspecting the result with `grep xor` returns empty; only `and`, `sub`, `addi`, and `or` appear — all native sc1 instructions.
+
+=== Target Registration <sc1-registration>
+
+Each target triple `rvscN-unknown-elf` is registered in two files:
+
+- `gcc/config/config.sub` normalises the CPU name pattern `rvscN`, allowing GCC's driver to recognize the triple.
+- `gcc/config.gcc` maps `rvscN-*-elf*` to `cpu_type=riscv`, sets the default architecture and ABI (`--with-arch=rv32i --with-abi=ilp32` for sc0 and sc1), and appends `riscv/rvscN.h` to `tm_file`.
+
+The per-target header defines `CC1_SPEC` to inject flags automatically:
+
+```c
+// rvsc1.h
+#define CC1_SPEC \
+  "%{!mfence:-mno-fence}  %{!mauipc:-mno-auipc} %{!mshift:-mno-shift}" \
+  " %{!mxor:-mno-xor}     %{!mori:-mno-ori}      %{!mandi:-mno-andi}"  \
+  " %{!mbne:-mno-bne}     %{!mslt:-mno-slt}      %{!mslti:-mno-slti}"  \
+  " %{!mblt:-mno-blt}     %{!mbge:-mno-bge}                          "  \
+  " %{!mbltu:-mno-bltu}   %{!mbgeu:-mno-bgeu}                        "  \
+  " %{!mbyte:-mno-byte}   %{!mhalf:-mno-half}"
 ```
 
-==== Building the toolchain
+The construct `%{!mfoo:-mno-foo}` reads: "if the user did not pass `-mfoo`, inject `-mno-foo`." A user invoking `rvsc1-unknown-elf-gcc program.c` passes no manual flags; the driver inserts the complete synthesis-enabling set automatically. The toolchain is built with a standard configure invocation using the target triple:
 
+// TODO: add the build instructions, not sure if here
 ```sh
 ../gcc/configure \
-    --target=rvsc2-unknown-elf \
+    --target=rvsc1-unknown-elf \
     --prefix=$(pwd)/install \
     --enable-languages=c
 ```
