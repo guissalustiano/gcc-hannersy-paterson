@@ -200,6 +200,12 @@ This is the english abstract.
   [*RV64I*],  [RISC-V, integers, 64 bits],
 )
 
+// --- List of Figures ---
+#outline(title: [List of Figures], target: figure.where(kind: image))
+
+// --- List of Tables ---
+#outline(title: [List of Tables], target: figure.where(kind: table))
+
 // --- Table of Contents ---
 #heading(level: 1, numbering: none)[TABLE OF CONTENTS]
 #outline(title: none, indent: auto, depth: 3)
@@ -634,12 +640,15 @@ sub  rd, x0, rs1    # rd = -rs1
 addi rd, rd, -1     # rd = -rs1 - 1 = ~rs1
 ```
 
-#table(
-  columns: (1fr, 1fr, 1fr),
-  stroke: none,
-  inset: (y: 4pt),
-  [*Static instructions*], [*Extra registers*], [*Applies to*],
-  [2], [0], [rvsc0, rvsc1],
+#figure(
+  table(
+    columns: (1fr, 1fr, 1fr),
+    stroke: none,
+    inset: (y: 4pt),
+    [*Static instructions*], [*Extra registers*], [*Applies to*],
+    [2], [0], [rvsc0, rvsc1],
+  ),
+  caption: [Cost summary for NOT synthesis],
 )
 
 ==== xor (R[rd] = R[rs1] ^ R[rs2]) <sc1-xor>
@@ -672,12 +681,15 @@ or    rd, rs1, rs2  # rd = rs1 | rs2
 and   rd, t0, rd    # rd = ~(rs1 & rs2) & (rs1 | rs2) = rs1 ^ rs2
 ```
 
-#table(
-  columns: (1fr, 1fr, 1fr, 1fr),
-  stroke: none,
-  inset: (y: 4pt),
-  [*Listing*], [*With [not] expanded*], [*Extra registers*], [*Applies to*],
-  [4 insns], [6 insns], [1 (t0)], [rvsc0, rvsc1],
+#figure(
+  table(
+    columns: (1fr, 1fr, 1fr, 1fr),
+    stroke: none,
+    inset: (y: 4pt),
+    [*Listing*], [*With [not] expanded*], [*Extra registers*], [*Applies to*],
+    [4 insns], [6 insns], [1 (t0)], [rvsc0, rvsc1],
+  ),
+  caption: [Cost summary for XOR synthesis],
 )
 
 ==== Shifts: SLL, SRL, SRA <sc1-shifts>
@@ -721,12 +733,15 @@ done:
 
 Let $b$ denote the masked shift amount. The loop executes $b$ iterations of 4 instructions each, with 3 setup instructions.
 
-#table(
-  columns: (1fr, 1fr, 1fr, 1fr),
-  stroke: none,
-  inset: (y: 4pt),
-  [*Formula*], [*Min (b=0)*], [*Max (b=31)*], [*Extra registers*],
-  [$3 + 4b$], [3], [127], [1 (t1)],
+#figure(
+  table(
+    columns: (1fr, 1fr, 1fr, 1fr),
+    stroke: none,
+    inset: (y: 4pt),
+    [*Formula*], [*Min (b=0)*], [*Max (b=31)*], [*Extra registers*],
+    [$3 + 4b$], [3], [127], [1 (t1)],
+  ),
+  caption: [Cost summary for SLL synthesis],
 )
 
 
@@ -783,12 +798,15 @@ done:
 
 The main loop runs $(32 - s)$ iterations where $s$ is the masked shift amount; each iteration costs 4–5 instructions. Initialization and the `in_mask` pre-shift add overhead proportional to $s$.
 
-#table(
-  columns: (1fr, 1fr, 1fr),
-  stroke: none,
-  inset: (y: 4pt),
-  [*Worst case*], [*Extra registers*], [*Applies to*],
-  [~170 insns], [5 (t0–t5)], [rvsc0, rvsc1],
+#figure(
+  table(
+    columns: (1fr, 1fr, 1fr),
+    stroke: none,
+    inset: (y: 4pt),
+    [*Worst case*], [*Extra registers*], [*Applies to*],
+    [~170 insns], [5 (t0–t5)], [rvsc0, rvsc1],
+  ),
+  caption: [Cost summary for SRL synthesis],
 )
 
 ===== Arithmetic Right Shift (SRA) <sc1-sra>
@@ -907,13 +925,16 @@ or    t2, t2, t3     # borrow = generated | propagated
 [srl  rd,  t2, 31]   # rd = borrow >> 31  (derived)
 ```
 
-#table(
-  columns: (1fr, 1fr, 1fr),
-  stroke: none,
-  inset: (y: 4pt),
-  [*Operation*], [*Approx. instructions (full expansion)*], [*Extra registers*],
-  [`slt`], [~60], [3 (t0–t2)],
-  [`sltu`], [~70], [4 (t0–t3)],
+#figure(
+  table(
+    columns: (1fr, 1fr, 1fr),
+    stroke: none,
+    inset: (y: 4pt),
+    [*Operation*], [*Approx. instructions (full expansion)*], [*Extra registers*],
+    [`slt`], [~60], [3 (t0–t2)],
+    [`sltu`], [~70], [4 (t0–t3)],
+  ),
+  caption: [Cost summary for SLT and SLTU synthesis],
 )
 
 
@@ -997,11 +1018,14 @@ lw    rd, pool_entry(x0)  # rd = *(pool_entry)  where pool_entry holds imm20 << 
 
 This requires that `pool_entry` fits in a 12-bit signed offset from `x0` (address < 2048), which holds for the short programs typical of the educational processor.
 
-#table(
-  columns: 3,
-  [*Approach*], [*Instructions*], [*Memory reads*],
-  [addi + sll], [~5], [0],
-  [lw from pool], [1], [1],
+#figure(
+  table(
+    columns: 3,
+    [*Approach*], [*Instructions*], [*Memory reads*],
+    [addi + sll], [~5], [0],
+    [lw from pool], [1], [1],
+  ),
+  caption: [Comparison of LUI synthesis approaches for rvsc0],
 )
 
 *Implementation choice.* Approach 2 (constant pool via `lw`) was selected: it produces a single instruction at each use site and avoids the shift instructions that rvsc0 does not support natively. The constraint it imposes --- every pool entry must reside within the 12-bit signed offset range of `x0`, i.e., below address 2048 --- is met by the rvsc0 linker script, which places `.text` at address 0 and the constant pool immediately after. Programs that fit within the first 2 KB of ROM always satisfy this constraint.
@@ -1055,13 +1079,16 @@ and   t0, rs1, t0         # t0 = rs1 & 2  (0 or 2: which halfword)
 
 Since sc1 shifts are themselves synthesized via `add`/`beq` loops, each byte load expands to approximately 70–80 instructions. This cost is intentional: it makes the value of native `lb`/`lbu` instructions tangible to the student building the processor.
 
-#table(
-  columns: (1fr, 1fr, 1fr),
-  stroke: none,
-  inset: (y: 4pt),
-  [*Operation*], [*Approx. instructions*], [*Extra registers*],
-  [`lb`, `lbu`], [~70–80], [2 (t0, t1)],
-  [`lh`, `lhu`], [~70–80], [2 (t0, t1)],
+#figure(
+  table(
+    columns: (1fr, 1fr, 1fr),
+    stroke: none,
+    inset: (y: 4pt),
+    [*Operation*], [*Approx. instructions*], [*Extra registers*],
+    [`lb`, `lbu`], [~70–80], [2 (t0, t1)],
+    [`lh`, `lhu`], [~70–80], [2 (t0, t1)],
+  ),
+  caption: [Cost summary for LB, LBU, LH, and LHU synthesis],
 )
 
 === Stores <sc1-stores>
@@ -1108,12 +1135,15 @@ or    t1, t1, t2            # t1 = word with byte inserted
 sw    t1, 0(t3)             # write back
 ```
 
-#table(
-  columns: (1fr, 1fr, 1fr),
-  stroke: none,
-  inset: (y: 4pt),
-  [*Extra memory ops*], [*Approx. instructions (full expansion)*], [*Extra registers*],
-  [1 lw + 1 sw], [~100], [3 (t0–t2)],
+#figure(
+  table(
+    columns: (1fr, 1fr, 1fr),
+    stroke: none,
+    inset: (y: 4pt),
+    [*Extra memory ops*], [*Approx. instructions (full expansion)*], [*Extra registers*],
+    [1 lw + 1 sw], [~100], [3 (t0–t2)],
+  ),
+  caption: [Cost summary for SB synthesis],
 )
 
 The `sh` synthesis follows the same read-modify-write pattern as `sb`, with `MASK = 2` and mask constant `0xFFFF`. Since `0xFFFF` exceeds the 12-bit `addi` range, it is materialized via `lui 0x10; addi -1`.
@@ -1152,12 +1182,15 @@ or    t1, t1, t2            # t1 = word with halfword inserted
 sw    t1, 0(t3)             # write back
 ```
 
-#table(
-  columns: (1fr, 1fr, 1fr),
-  stroke: none,
-  inset: (y: 4pt),
-  [*Extra memory ops*], [*Approx. instructions (full expansion)*], [*Extra registers*],
-  [1 lw + 1 sw], [~105], [3 (t0–t2)],
+#figure(
+  table(
+    columns: (1fr, 1fr, 1fr),
+    stroke: none,
+    inset: (y: 4pt),
+    [*Extra memory ops*], [*Approx. instructions (full expansion)*], [*Extra registers*],
+    [1 lw + 1 sw], [~105], [3 (t0–t2)],
+  ),
+  caption: [Cost summary for SH synthesis],
 )
 
 === Control Flow <sc1-jump>
@@ -1420,11 +1453,11 @@ For SLL with a shift amount $b$, the synthesis loop executes $b$ iterations of 4
     columns: (auto, auto, auto, auto),
     align: left,
     [*Shift amount*], [*Predicted (3+4b)*], [*rvsc3 (native)*], [*rvsc1 (measured)*],
-    [0],  [3],   [1], [// TODO],
-    [1],  [7],   [1], [// TODO],
-    [8],  [35],  [1], [// TODO],
-    [16], [67],  [1], [// TODO],
-    [31], [127], [1], [// TODO],
+    [0],  [3],   [1], [TODO],
+    [1],  [7],   [1], [TODO],
+    [8],  [35],  [1], [TODO],
+    [16], [67],  [1], [TODO],
+    [31], [127], [1], [TODO],
   ),
   caption: [SLL retired instruction counts: predicted vs. measured],
 )
