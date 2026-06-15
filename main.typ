@@ -252,7 +252,17 @@ Furthermore, students interact with GCC — the dominant open-source compiler fo
 == Document Organization
 
 // TODO: review this after document is finished
-The remainder of this monograph is organized as follows. Chapter 2 presents the conceptual background, covering the GCC compilation framework, the RISC-V instruction set architecture, and the architecture of the Hennessy-Patterson educational processor. Chapter 3 describes the development method, including the specification, implementation, and testing phases followed for each target. Chapter 4 specifies the requirements for each of the eight targets, defining the allowed instruction sets and the synthesis obligations imposed on the compiler. Chapter 5 details the implementation, describing the instruction synthesis techniques developed inside the GCC machine description and the per-target configuration files. Chapter 6 presents the test results and discusses the validity and limitations of each target. Chapter 7 presents the conclusions, contributions, and directions for future work.
+The remainder of this monograph is organized as follows. Chapter 2 surveys related work. Chapter 3 presents the conceptual background, covering the GCC compilation framework, the RISC-V instruction set architecture, and the architecture of the Hennessy-Patterson educational processor. Chapter 4 describes the development method, including the specification, implementation, and testing phases followed for each target. Chapter 5 specifies the requirements for each of the eight targets, defining the allowed instruction sets and the synthesis obligations imposed on the compiler. Chapter 6 details the implementation, describing the instruction synthesis techniques developed inside the GCC machine description and the per-target configuration files. Chapter 7 presents the test results and discusses the validity and limitations of each target. Chapter 8 presents the conclusions, contributions, and directions for future work.
+
+
+= Related Work
+
+// TODO: discuss scope and coverage with advisor.
+// Candidate areas:
+// - Pedagogical RISC-V/MIPS simulators (Venus, RARS, SPIM, MARS) — operate at assembly level, no C compiler
+// - GCC/LLVM backends for restricted embedded ISAs (AVR, MSP430, libgcc soft-float) — closest technical precedent
+// - Custom GCC backends for research/academic ISAs (OpenRISC, PULP) — demonstrates backend extensibility
+// - ISA subset selection in compiler research — design-time vs. this work's compile-time synthesis direction
 
 
 = Conceptual Background
