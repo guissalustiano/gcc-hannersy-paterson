@@ -1,0 +1,1 @@
+/home/salust/p/scgcc/tests/sc2/../../binutils-gdb/ld

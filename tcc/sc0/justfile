@@ -1,9 +1,0 @@
-default: test
-
-# Run all sc0 ISA compliance tests
-test:
-    python3 main.py
-
-# Run a single source file
-test-one file:
-    python3 main.py {{file}}

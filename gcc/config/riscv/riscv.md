@@ -2158,6 +2158,31 @@
       emit_insn (gen_ashrsi3 (operands[0], t_tmp, GEN_INT (shift_bits)));
       DONE;
     }
+  /* sc1: sign extend from QI/HI register (or subreg) without shifts.
+     Branchless formula: result = zero_ext + 2*(-(zero_ext & sign_bit))
+     where zero_ext = src & mask.  Uses only and/sub/add.  */
+  if (!TARGET_SHIFT
+      && !MEM_P (operands[1])
+      && ((<SHORT:MODE>mode == QImode && !TARGET_BYTE)
+	  || (<SHORT:MODE>mode == HImode && !TARGET_HALF)))
+    {
+      int narrow = GET_MODE_BITSIZE (<SHORT:MODE>mode);
+      rtx src = gen_lowpart (SImode, operands[1]);
+      rtx t1 = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t1, src,
+			     gen_int_mode (((HOST_WIDE_INT)1 << narrow) - 1,
+					   SImode)));
+      rtx t2 = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t2, t1,
+			     gen_int_mode ((HOST_WIDE_INT)1 << (narrow - 1),
+					   SImode)));
+      rtx t3 = gen_reg_rtx (SImode);
+      emit_insn (gen_subsi3 (t3, const0_rtx, t2));
+      rtx t4 = gen_reg_rtx (SImode);
+      emit_insn (gen_addsi3 (t4, t3, t3));
+      emit_insn (gen_addsi3 (operands[0], t1, t4));
+      DONE;
+    }
 })
 
 (define_insn_and_split "*extend<SHORT:mode><SUPERQI:mode>2"
@@ -2169,7 +2194,7 @@
   "@
    #
    l<SHORT:size>\t%0,%1"
-  "&& reload_completed
+  "&& reload_completed && TARGET_SHIFT
    && REG_P (operands[1])
    && !paradoxical_subreg_p (operands[0])"
   [(set (match_dup 0) (ashift:SI (match_dup 1) (match_dup 2)))
@@ -3584,9 +3609,10 @@
        (match_operand     2 "const_int_operand")
        (match_operand     3 "const_int_operand")))
    (clobber (match_scratch:GPR  4 "=&r"))]
-  "!((TARGET_ZBS || TARGET_XTHEADBS || TARGET_ZICOND
-      || TARGET_XVENTANACONDOPS || TARGET_SFB_ALU)
-     && (INTVAL (operands[2]) == 1))
+  "TARGET_SHIFT
+   && !((TARGET_ZBS || TARGET_XTHEADBS || TARGET_ZICOND
+         || TARGET_XVENTANACONDOPS || TARGET_SFB_ALU)
+        && (INTVAL (operands[2]) == 1))
    && !TARGET_XTHEADBB
    && !TARGET_XANDESPERF
    && !(TARGET_64BIT
