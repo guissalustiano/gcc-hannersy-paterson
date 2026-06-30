@@ -3207,6 +3207,73 @@
   [(set_attr "type" "shift")
    (set_attr "mode" "SI")])
 
+;; Fallback: recognize (ashift:SI reg const_int) when !TARGET_SHIFT so that
+;; the combine pass can reconstruct this pattern without causing an unrecognizable-
+;; insn ICE in vregs.  Split post-reload using the destination for intermediate
+;; values (no new pseudos needed for constant shifts).
+(define_insn_and_split "*ashlsi3_noshift"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+	(ashift:SI (match_operand:SI 1 "register_operand" "r")
+		   (match_operand 2 "const_int_operand")))]
+  "!TARGET_SHIFT"
+  "#"
+  "!TARGET_SHIFT"
+  [(const_int 0)]
+{
+  HOST_WIDE_INT shamt = INTVAL (operands[2]) & 31;
+  if (shamt == 0)
+    {
+      emit_move_insn (operands[0], operands[1]);
+      DONE;
+    }
+  emit_insn (gen_addsi3 (operands[0], operands[1], operands[1]));
+  for (HOST_WIDE_INT i = 1; i < shamt; i++)
+    emit_insn (gen_addsi3 (operands[0], operands[0], operands[0]));
+  DONE;
+})
+
+;; Fallback: recognize (not:SI reg) when !TARGET_XOR so the combine pass can
+;; reconstruct this from the two-instruction synthesis (sub x0,rs; addi -1)
+;; without triggering a vregs ICE.  No scratch needed: dest serves as both
+;; intermediate and result (sub overwrites op1 only when op0==op1, which is
+;; semantically correct for ~x = -x - 1).
+(define_insn_and_split "*one_cmplsi2_noxor"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+        (not:SI (match_operand:SI 1 "register_operand" "r")))]
+  "!TARGET_XOR && !TARGET_64BIT"
+  "#"
+  "!TARGET_XOR && !TARGET_64BIT"
+  [(const_int 0)]
+{
+  emit_insn (gen_subsi3 (operands[0], const0_rtx, operands[1]));
+  emit_insn (gen_addsi3 (operands[0], operands[0], GEN_INT (-1)));
+  DONE;
+})
+
+;; Fallback: recognize (xor:SI reg reg) when !TARGET_XOR so that combine
+;; cannot cause a vregs ICE.  Uses the identity XOR(a,b) = a + b - 2*(a&b),
+;; which is exact in modular arithmetic because (a|b) - (a&b) never borrows
+;; across bit positions.  Sequenced to use only op0 as scratch (early-clobber):
+;;   op0 = op1 & op2   (t = a & b)
+;;   op0 = op0 + op0   (t = 2*(a&b))
+;;   op0 = op1 - op0   (t = a - 2*(a&b))
+;;   op0 = op0 + op2   (result = a + b - 2*(a&b) = a XOR b)
+(define_insn_and_split "*xorsi3_noxor"
+  [(set (match_operand:SI 0 "register_operand" "=&r")
+        (xor:SI (match_operand:SI 1 "register_operand" "r")
+                (match_operand:SI 2 "register_operand" "r")))]
+  "!TARGET_XOR && !TARGET_64BIT"
+  "#"
+  "!TARGET_XOR && !TARGET_64BIT"
+  [(const_int 0)]
+{
+  emit_insn (gen_andsi3 (operands[0], operands[1], operands[2]));
+  emit_insn (gen_addsi3 (operands[0], operands[0], operands[0]));
+  emit_insn (gen_subsi3 (operands[0], operands[1], operands[0]));
+  emit_insn (gen_addsi3 (operands[0], operands[0], operands[2]));
+  DONE;
+})
+
 (define_expand "<optab>si3"
   [(set (match_operand:SI     0 "register_operand" "= r")
        (any_shift:SI (match_operand:SI 1 "register_operand" "  r")
@@ -3771,7 +3838,7 @@
 	 (label_ref (match_operand 0 "" ""))
 	 (pc)))
    (clobber (match_scratch:X 4 "=&r"))]
-  "!SMALL_OPERAND (INTVAL (operands[3]))"
+  "TARGET_SHIFT && !SMALL_OPERAND (INTVAL (operands[3]))"
   "#"
   "&& reload_completed"
   [(set (match_dup 4) (lshiftrt:X (subreg:X (match_dup 2) 0) (match_dup 6)))
@@ -3807,7 +3874,8 @@
 	 (pc)))
    (clobber (match_scratch:X 4 "=&r"))
    (clobber (match_scratch:X 5 "=&r"))]
-  "!SMALL_OPERAND (INTVAL (operands[2]))
+  "TARGET_SHIFT
+    && !SMALL_OPERAND (INTVAL (operands[2]))
     && !SMALL_OPERAND (INTVAL (operands[3]))
     && SMALL_AFTER_COMMON_TRAILING_SHIFT (INTVAL (operands[2]),
 					     INTVAL (operands[3]))"
@@ -3848,7 +3916,8 @@
 	 (label_ref (match_operand 0 "" ""))
 	 (pc)))
    (clobber (match_scratch:X 4 "=&r"))]
-  "(INTVAL (operands[3]) >= 0 || !partial_subreg_p (operands[2]))
+  "TARGET_SHIFT
+    && (INTVAL (operands[3]) >= 0 || !partial_subreg_p (operands[2]))
     && popcount_hwi (INTVAL (operands[3])) > 1
     && !SMALL_OPERAND (INTVAL (operands[3]))"
   "#"

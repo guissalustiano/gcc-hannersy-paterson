@@ -1,0 +1,5 @@
+include $(srcdir)/config/riscv/t-elf
+
+# Functions that trigger ICEs with rvsc synthesis restrictions (no FP ISA, no shifts).
+# HC (half-precision complex) and DI→SF float conversions generate unrecognizable insns.
+LIB2FUNCS_EXCLUDE += _mulhc3 _divhc3 _floatdisf _floatundisf
