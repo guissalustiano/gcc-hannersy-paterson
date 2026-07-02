@@ -4012,17 +4012,79 @@
   if (!TARGET_BNE && GET_CODE (operands[1]) == NE)
     return "beq\t%2,%z3,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
 
+  /* When !TARGET_SLT, synthesise signed/unsigned ordered branches using only
+     the rvsc1 allowlist: sub, addi, and, or, lui, beq, jalr.
+     XOR(x,y) is expanded via De Morgan: ~(x&y) & (x|y).
+     NOT(x) is expanded as: sub(zero,x); addi -1.                           */
   if (!TARGET_BGE && GET_CODE (operands[1]) == GE)
-    return "slt\tt1,%2,%z3\n\tbeq\tt1,zero,%l0";
+    {
+      if (!TARGET_SLT)
+	/* SLT synthesis (signed): corrected_diff = (diff ^ overflow);
+	   overflow = xor(a,b) & xor(a,diff).  Branch if bit31==0 (a>=b).  */
+	return
+	  "sub\tt1,%2,%z3\n\t"
+	  "and\tt2,%2,%z3\n\tsub\tt3,zero,t2\n\taddi\tt3,t3,-1\n\t"
+	  "or\tt2,%2,%z3\n\tand\tt2,t3,t2\n\t"
+	  "and\tt3,%2,t1\n\tsub\tt4,zero,t3\n\taddi\tt4,t4,-1\n\t"
+	  "or\tt3,%2,t1\n\tand\tt3,t4,t3\n\t"
+	  "and\tt2,t2,t3\n\t"
+	  "and\tt3,t1,t2\n\tsub\tt4,zero,t3\n\taddi\tt4,t4,-1\n\t"
+	  "or\tt3,t1,t2\n\tand\tt3,t4,t3\n\t"
+	  "lui\tt2,0x80000\n\tand\tt3,t3,t2\n\t"
+	  "beq\tt3,zero,%l0";
+      return "slt\tt1,%2,%z3\n\tbeq\tt1,zero,%l0";
+    }
 
   if (!TARGET_BLT && GET_CODE (operands[1]) == LT)
-    return "slt\tt1,%2,%z3\n\tbeq\tt1,zero,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
+    {
+      if (!TARGET_SLT)
+	/* Same SLT synthesis; branch if bit31==1 (a<b), synthesised BNE.   */
+	return
+	  "sub\tt1,%2,%z3\n\t"
+	  "and\tt2,%2,%z3\n\tsub\tt3,zero,t2\n\taddi\tt3,t3,-1\n\t"
+	  "or\tt2,%2,%z3\n\tand\tt2,t3,t2\n\t"
+	  "and\tt3,%2,t1\n\tsub\tt4,zero,t3\n\taddi\tt4,t4,-1\n\t"
+	  "or\tt3,%2,t1\n\tand\tt3,t4,t3\n\t"
+	  "and\tt2,t2,t3\n\t"
+	  "and\tt3,t1,t2\n\tsub\tt4,zero,t3\n\taddi\tt4,t4,-1\n\t"
+	  "or\tt3,t1,t2\n\tand\tt3,t4,t3\n\t"
+	  "lui\tt2,0x80000\n\tand\tt3,t3,t2\n\t"
+	  "beq\tt3,zero,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
+      return "slt\tt1,%2,%z3\n\tbeq\tt1,zero,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
+    }
 
   if (!TARGET_BGEU && GET_CODE (operands[1]) == GEU)
-    return "sltu\tt1,%2,%z3\n\tbeq\tt1,zero,%l0";
+    {
+      if (!TARGET_SLT)
+	/* SLTU synthesis (unsigned): borrow = (~a & b) | (~xor(a,b) & diff).
+	   Branch if bit31(borrow)==0 (a>=u b).                              */
+	return
+	  "sub\tt1,%2,%z3\n\t"
+	  "sub\tt2,zero,%2\n\taddi\tt2,t2,-1\n\tand\tt2,t2,%z3\n\t"
+	  "and\tt3,%2,%z3\n\tsub\tt4,zero,t3\n\taddi\tt4,t4,-1\n\t"
+	  "or\tt3,%2,%z3\n\tand\tt3,t4,t3\n\t"
+	  "sub\tt4,zero,t3\n\taddi\tt4,t4,-1\n\tand\tt3,t4,t1\n\t"
+	  "or\tt2,t2,t3\n\t"
+	  "lui\tt3,0x80000\n\tand\tt3,t2,t3\n\t"
+	  "beq\tt3,zero,%l0";
+      return "sltu\tt1,%2,%z3\n\tbeq\tt1,zero,%l0";
+    }
 
   if (!TARGET_BLTU && GET_CODE (operands[1]) == LTU)
-    return "sltu\tt1,%2,%z3\n\tbeq\tt1,zero,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
+    {
+      if (!TARGET_SLT)
+	/* Same SLTU synthesis; branch if bit31(borrow)==1 (a<u b).         */
+	return
+	  "sub\tt1,%2,%z3\n\t"
+	  "sub\tt2,zero,%2\n\taddi\tt2,t2,-1\n\tand\tt2,t2,%z3\n\t"
+	  "and\tt3,%2,%z3\n\tsub\tt4,zero,t3\n\taddi\tt4,t4,-1\n\t"
+	  "or\tt3,%2,%z3\n\tand\tt3,t4,t3\n\t"
+	  "sub\tt4,zero,t3\n\taddi\tt4,t4,-1\n\tand\tt3,t4,t1\n\t"
+	  "or\tt2,t2,t3\n\t"
+	  "lui\tt3,0x80000\n\tand\tt3,t2,t3\n\t"
+	  "beq\tt3,zero,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
+      return "sltu\tt1,%2,%z3\n\tbeq\tt1,zero,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
+    }
 
   if (get_attr_length (insn) == 12)
     return "b%r1\t%2,%z3,1f; jump\t%l0,ra; 1:";
@@ -4330,6 +4392,28 @@
       enum rtx_code code = GET_CODE (operands[1]);
       rtx op0 = operands[2];
       rtx op1 = force_reg (SImode, operands[3]);
+
+      /* EQ/NE: snez(diff) = lshr((diff | -diff), 31); seqz = 1 - snez. */
+      if (code == EQ || code == NE)
+        {
+          rtx diff   = gen_reg_rtx (SImode);
+          rtx neg    = gen_reg_rtx (SImode);
+          rtx tmp    = gen_reg_rtx (SImode);
+          rtx snez_r = gen_reg_rtx (SImode);
+          emit_insn (gen_subsi3 (diff, op0, op1));
+          emit_insn (gen_subsi3 (neg, const0_rtx, diff));
+          emit_insn (gen_iorsi3 (tmp, diff, neg));
+          emit_insn (gen_lshrsi3 (snez_r, tmp, GEN_INT (31)));
+          if (code == NE)
+            emit_move_insn (operands[0], snez_r);
+          else
+            {
+              rtx one = force_reg (SImode, const1_rtx);
+              emit_insn (gen_subsi3 (operands[0], one, snez_r));
+            }
+          DONE;
+        }
+
       bool invert = false;
 
       /* Normalise to LT or LTU; GT/LE/GE are handled by operand swap + invert. */
@@ -4526,7 +4610,7 @@
   [(set (match_operand:GPR       0 "register_operand" "=r")
 	(eq:GPR (match_operand:X 1 "register_operand" " r")
 		(const_int 0)))]
-  ""
+  "TARGET_SLT"
   "seqz\t%0,%1"
   [(set_attr "type" "slt")
    (set_attr "mode" "<X:MODE>")])
@@ -4535,7 +4619,7 @@
   [(set (match_operand:GPR       0 "register_operand" "=r")
 	(ne:GPR (match_operand:X 1 "register_operand" " r")
 		(const_int 0)))]
-  ""
+  "TARGET_SLT"
   "snez\t%0,%1"
   [(set_attr "type" "slt")
    (set_attr "mode" "<X:MODE>")])
