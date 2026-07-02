@@ -610,6 +610,25 @@
 ;; Length of instruction in bytes.
 (define_attr "length" ""
    (cond [
+	  ;; When !TARGET_AUIPC, jal and bne are unavailable so the assembler
+	  ;; cannot relax branches.  GCC must emit full expansions itself.
+	  ;;
+	  ;; NE branch: always beq+lui+addi+jr (16 B).  The short form using
+	  ;; beq+beq_zero is unreliable: GCC branch-shortening can converge at a
+	  ;; size where the internal beq zero,zero lands out of assembler range.
+	  ;; EQ branch: short (<= +-4KB) -> single beq (4 B);
+	  ;;            long             -> beq+beq_zero+lui+addi+jr (20 B).
+	  (and (eq_attr "type" "branch")
+	       (match_test "!TARGET_AUIPC && GET_CODE (operands[1]) == NE"))
+	  (const_int 16)
+
+	  (and (eq_attr "type" "branch")
+	       (match_test "!TARGET_AUIPC && GET_CODE (operands[1]) == EQ"))
+	  (if_then_else (and (le (minus (match_dup 0) (pc)) (const_int 4088))
+			     (le (minus (pc) (match_dup 0)) (const_int 4092)))
+			(const_int 4)
+			(const_int 20))
+
 	  ;; Branches further than +/- 1 MiB require three instructions.
 	  ;; Branches further than +/- 4 KiB require two instructions.
 	  (eq_attr "type" "branch")
@@ -629,15 +648,20 @@
 	  ;; Also, jumps that cross section boundaries (e.g., from hot to cold
 	  ;; section when -freorder-blocks-and-partition is used) require two
 	  ;; instructions because the linker may place the sections far apart.
+	  ;;
+	  ;; When !TARGET_AUIPC, all jumps are synthesised as lui+addi+jr (12 B)
+	  ;; regardless of distance, so GCC correctly estimates branch ranges.
 	  (eq_attr "type" "jump")
-	  (if_then_else (match_test "CROSSING_JUMP_P (insn)")
-			(const_int 8)
-			(if_then_else (and (le (minus (match_dup 0) (pc))
-					       (const_int 1048568))
-					   (le (minus (pc) (match_dup 0))
-					       (const_int 1048572)))
-				      (const_int 4)
-				      (const_int 8)))
+	  (if_then_else (match_test "!TARGET_AUIPC")
+			(const_int 12)
+			(if_then_else (match_test "CROSSING_JUMP_P (insn)")
+				      (const_int 8)
+				      (if_then_else (and (le (minus (match_dup 0) (pc))
+							     (const_int 1048568))
+						         (le (minus (pc) (match_dup 0))
+							     (const_int 1048572)))
+						    (const_int 4)
+						    (const_int 8))))
 
 	  ;; Conservatively assume calls take two instructions (AUIPC + JALR).
 	  ;; The linker will opportunistically relax the sequence to JAL.
@@ -4010,7 +4034,17 @@
   "!TARGET_XCVBI"
 {
   if (!TARGET_BNE && GET_CODE (operands[1]) == NE)
+    /* NE synthesis: reverse condition to skip over lui+addi+jr unconditional jump.
+       Always 16 bytes; the short beq+beq_zero form is unsafe because GCC
+       branch-shortening can converge at a size where beq zero,zero hits an
+       assembler out-of-range expansion.  */
     return "beq\t%2,%z3,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
+
+  /* Long-range EQ (length==20): beq to lui-block, then unconditional
+     beq zero,zero to skip it, then lui+addi+jr.  Avoids assembler
+     bne+jal expansion which uses instructions forbidden by sc1.  */
+  if (get_attr_length (insn) == 20)
+    return "beq\t%2,%z3,1f\n\tbeq\tzero,zero,2f\n1:\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n2:";
 
   /* When !TARGET_SLT, synthesise signed/unsigned ordered branches using only
      the rvsc1 allowlist: sub, addi, and, or, lui, beq, jalr.
