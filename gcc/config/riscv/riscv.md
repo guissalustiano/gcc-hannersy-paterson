@@ -1969,9 +1969,10 @@
 (define_insn_and_split "*zero_extendhi<GPR:mode>2"
   [(set (match_operand:GPR    0 "register_operand"     "=r,r")
 	(zero_extend:GPR
-	    (match_operand:HI 1 "nonimmediate_operand" " r,m")))]
+	    (match_operand:HI 1 "nonimmediate_operand" " r,Bh")))]
   "!TARGET_ZBB && !TARGET_XTHEADBB && !TARGET_XTHEADMEMIDX
-   && !TARGET_XANDESPERF"
+   && !TARGET_XANDESPERF
+   && (!MEM_P (operands[1]) || TARGET_HALF)"
   "@
    #
    lhu\t%0,%1"
@@ -2068,8 +2069,8 @@
 (define_insn "*zero_extendqi<SUPERQI:mode>2_internal"
   [(set (match_operand:SUPERQI 0 "register_operand"    "=r,r")
 	(zero_extend:SUPERQI
-	    (match_operand:QI 1 "nonimmediate_operand" " r,m")))]
-  "!TARGET_XTHEADMEMIDX"
+	    (match_operand:QI 1 "nonimmediate_operand" " r,Bq")))]
+  "!TARGET_XTHEADMEMIDX && (!MEM_P (operands[1]) || TARGET_BYTE)"
   "@
    andi\t%0,%1,0xff
    lbu\t%0,%1"
@@ -2188,9 +2189,11 @@
 (define_insn_and_split "*extend<SHORT:mode><SUPERQI:mode>2"
   [(set (match_operand:SUPERQI   0 "register_operand"     "=r,r")
 	(sign_extend:SUPERQI
-	    (match_operand:SHORT 1 "nonimmediate_operand" " r,m")))]
+	    (match_operand:SHORT 1 "nonimmediate_operand" " r,Bs")))]
   "!TARGET_ZBB && !TARGET_XTHEADBB && !TARGET_XTHEADMEMIDX
-   && !TARGET_XANDESPERF"
+   && !TARGET_XANDESPERF
+   && (!MEM_P (operands[1])
+       || (<SHORT:MODE>mode == HImode ? TARGET_HALF : TARGET_BYTE))"
   "@
    #
    l<SHORT:size>\t%0,%1"
@@ -2830,15 +2833,45 @@
       emit_move_insn (gen_rtx_MEM (SImode, t_aligned), t_word);
       DONE;
     }
+  /* sc1 synthesis: lhu rd, addr → lw aligned; lshr by bit_off; mask 0xFFFF */
+  if (!TARGET_HALF && MEM_P (operands[1]))
+    {
+      rtx addr      = force_reg (SImode, XEXP (operands[1], 0));
+      rtx t_neg4    = gen_reg_rtx (SImode);
+      emit_move_insn (t_neg4, GEN_INT (-4));
+      rtx t_aligned = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t_aligned, addr, t_neg4));
+      rtx t_word    = gen_reg_rtx (SImode);
+      emit_move_insn (t_word, gen_rtx_MEM (SImode, t_aligned));
+
+      /* bit_off = (addr & 2) << 3  → 0 or 16 */
+      rtx t2        = gen_reg_rtx (SImode);
+      emit_move_insn (t2, GEN_INT (2));
+      rtx t_hoff    = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t_hoff, addr, t2));
+      rtx t_bit_off = gen_reg_rtx (SImode);
+      emit_insn (gen_ashlsi3 (t_bit_off, t_hoff, GEN_INT (3)));
+
+      rtx t_shifted = gen_reg_rtx (SImode);
+      emit_insn (gen_lshrsi3 (t_shifted, t_word, t_bit_off));
+
+      rtx t_mask    = gen_reg_rtx (SImode);
+      emit_move_insn (t_mask, GEN_INT (0xFFFF));
+      rtx t_result  = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t_result, t_shifted, t_mask));
+      emit_move_insn (operands[0], gen_lowpart (HImode, t_result));
+      DONE;
+    }
   if (riscv_legitimize_move (HImode, operands[0], operands[1]))
     DONE;
 })
 
 (define_insn "*movhi_internal"
-  [(set (match_operand:HI 0 "nonimmediate_operand" "=r,r,r, m,  *f,*r,r")
-	(match_operand:HI 1 "move_operand"	   " r,T,m,rJ,*r*J,*f,vp"))]
+  [(set (match_operand:HI 0 "nonimmediate_operand" "=r,r,r, Bh,  *f,*r,r")
+	(match_operand:HI 1 "move_operand"	   " r,T,Bh,rJ,*r*J,*f,vp"))]
   "(register_operand (operands[0], HImode)
-    || reg_or_0_operand (operands[1], HImode))"
+    || reg_or_0_operand (operands[1], HImode))
+   && (TARGET_HALF || (!MEM_P (operands[0]) && !MEM_P (operands[1])))"
   { return riscv_output_move (operands[0], operands[1]); }
   [(set_attr "move_type" "move,const,load,store,mtc,mfc,rdvlenb")
    (set_attr "mode" "HI")
@@ -2915,15 +2948,45 @@
       emit_move_insn (gen_rtx_MEM (SImode, t_aligned), t_word);
       DONE;
     }
+  /* sc1 synthesis: lbu rd, addr → lw aligned; lshr by bit_off; mask 0xFF */
+  if (!TARGET_BYTE && MEM_P (operands[1]))
+    {
+      rtx addr      = force_reg (SImode, XEXP (operands[1], 0));
+      rtx t_neg4    = gen_reg_rtx (SImode);
+      emit_move_insn (t_neg4, GEN_INT (-4));
+      rtx t_aligned = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t_aligned, addr, t_neg4));
+      rtx t_word    = gen_reg_rtx (SImode);
+      emit_move_insn (t_word, gen_rtx_MEM (SImode, t_aligned));
+
+      /* bit_off = (addr & 3) << 3  → 0, 8, 16, or 24 */
+      rtx t3        = gen_reg_rtx (SImode);
+      emit_move_insn (t3, GEN_INT (3));
+      rtx t_boff    = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t_boff, addr, t3));
+      rtx t_bit_off = gen_reg_rtx (SImode);
+      emit_insn (gen_ashlsi3 (t_bit_off, t_boff, GEN_INT (3)));
+
+      rtx t_shifted = gen_reg_rtx (SImode);
+      emit_insn (gen_lshrsi3 (t_shifted, t_word, t_bit_off));
+
+      rtx t_mask    = gen_reg_rtx (SImode);
+      emit_move_insn (t_mask, GEN_INT (0xFF));
+      rtx t_result  = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (t_result, t_shifted, t_mask));
+      emit_move_insn (operands[0], gen_lowpart (QImode, t_result));
+      DONE;
+    }
   if (riscv_legitimize_move (QImode, operands[0], operands[1]))
     DONE;
 })
 
 (define_insn "*movqi_internal"
-  [(set (match_operand:QI 0 "nonimmediate_operand" "=r,r,r, m,  *f,*r,r")
-	(match_operand:QI 1 "move_operand"         " r,I,m,rJ,*r*J,*f,vp"))]
+  [(set (match_operand:QI 0 "nonimmediate_operand" "=r,r,r, Bq,  *f,*r,r")
+	(match_operand:QI 1 "move_operand"         " r,I,Bq,rJ,*r*J,*f,vp"))]
   "(register_operand (operands[0], QImode)
-    || reg_or_0_operand (operands[1], QImode))"
+    || reg_or_0_operand (operands[1], QImode))
+   && (TARGET_BYTE || (!MEM_P (operands[0]) && !MEM_P (operands[1])))"
   { return riscv_output_move (operands[0], operands[1]); }
   [(set_attr "move_type" "move,const,load,store,mtc,mfc,rdvlenb")
    (set_attr "mode" "QI")

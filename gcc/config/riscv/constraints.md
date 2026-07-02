@@ -160,6 +160,23 @@
   (and (match_operand 0 "move_operand")
        (match_test "CONSTANT_P (op)")))
 
+;; sc1: memory alternatives gated on target feature flags so LRA never selects
+;; them when the corresponding native instruction is disabled.
+(define_memory_constraint "Bq"
+  "A memory operand, valid only when TARGET_BYTE (sc1+)"
+  (and (match_code "mem")
+       (match_test "TARGET_BYTE")))
+
+(define_memory_constraint "Bh"
+  "A memory operand, valid only when TARGET_HALF (sc1+)"
+  (and (match_code "mem")
+       (match_test "TARGET_HALF")))
+
+(define_memory_constraint "Bs"
+  "A QI/HI memory operand, valid when the corresponding native insn is enabled"
+  (and (match_code "mem")
+       (match_test "GET_MODE (op) == QImode ? TARGET_BYTE : TARGET_HALF")))
+
 ;; Zfa constraints.
 
 (define_constraint "zfli"
