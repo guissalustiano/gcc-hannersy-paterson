@@ -1991,38 +1991,158 @@
       emit_insn (gen_lshrsi3 (operands[0], t_tmp, GEN_INT (16)));
       DONE;
     }
+  /* sc1 synthesis for subreg:HI (reg:OI N) M sources: extract the aligned
+     SI word with fresh pseudos so that after vregs the subreg becomes a
+     plain lw (valid on sc1).  Plain reg:HI sources are handled by the
+     post-reload split below — doing it there avoids paradoxical-subreg
+     spill hazards that arise when the HI pseudo is stack-allocated.  */
+  if (!TARGET_HALF && SUBREG_P (operands[1]))
+    {
+      unsigned HOST_WIDE_INT boff
+	= SUBREG_BYTE (operands[1]).to_constant ();
+      rtx si_sub = gen_rtx_SUBREG (SImode, SUBREG_REG (operands[1]),
+				   boff & ~(unsigned HOST_WIDE_INT) 3);
+      rtx src_si = force_reg (SImode, si_sub);
+
+      rtx tdest = gen_reg_rtx (SImode);
+      if (boff & 2)
+	{
+	  /* Halfword is in the upper 16 bits; lshr 16 zero-extends.  */
+	  emit_insn (gen_lshrsi3 (tdest, src_si, GEN_INT (16)));
+	}
+      else if (TARGET_SHIFT)
+	{
+	  emit_insn (gen_ashlsi3 (tdest, src_si, GEN_INT (16)));
+	  emit_insn (gen_lshrsi3 (tdest, tdest, GEN_INT (16)));
+	}
+      else
+	{
+	  rtx mask = gen_reg_rtx (SImode);
+	  emit_move_insn (mask, gen_int_mode (0xFFFF, SImode));
+	  emit_insn (gen_andsi3 (tdest, src_si, mask));
+	}
+      emit_move_insn (operands[0], gen_lowpart (<GPR:MODE>mode, tdest));
+      DONE;
+    }
+  /* Plain reg:HI sources: expand-time synthesis avoids post-reload
+     complications with gen_and3 needing new pseudos for !TARGET_ANDI.
+     gen_lowpart(SImode, HI_reg) creates a paradoxical subreg that reload
+     handles correctly (widens load when spilled).  */
+  if (!TARGET_HALF && !MEM_P (operands[1]) && !SUBREG_P (operands[1]))
+    {
+      rtx src_si = gen_lowpart (SImode, operands[1]);
+      rtx tdest = gen_reg_rtx (SImode);
+      if (TARGET_SHIFT)
+	{
+	  emit_insn (gen_ashlsi3 (tdest, src_si, GEN_INT (16)));
+	  emit_insn (gen_lshrsi3 (tdest, tdest, GEN_INT (16)));
+	}
+      else
+	{
+	  rtx mask = gen_reg_rtx (SImode);
+	  emit_move_insn (mask, gen_int_mode (0xFFFF, SImode));
+	  emit_insn (gen_andsi3 (tdest, src_si, mask));
+	}
+      emit_move_insn (operands[0], gen_lowpart (<GPR:MODE>mode, tdest));
+      DONE;
+    }
 })
 
 (define_insn_and_split "*zero_extendhi<GPR:mode>2"
-  [(set (match_operand:GPR    0 "register_operand"     "=r,r")
+  [(set (match_operand:GPR    0 "register_operand"       "=&r, &r")
 	(zero_extend:GPR
-	    (match_operand:HI 1 "nonimmediate_operand" " r,Bh")))]
+	    (match_operand:HI 1 "nonimmediate_operand"   "   r,  m")))]
   "!TARGET_ZBB && !TARGET_XTHEADBB && !TARGET_XTHEADMEMIDX
    && !TARGET_XANDESPERF
    && (!MEM_P (operands[1]) || TARGET_HALF)"
-  "@
-   #
-   lhu\t%0,%1"
-  "&& reload_completed
-   && REG_P (operands[1])
-   && !paradoxical_subreg_p (operands[0])"
+  {
+    switch (which_alternative)
+      {
+      case 0: return "#";
+      case 1: return TARGET_HALF ? "lhu\t%0,%1" : "#";
+      default: gcc_unreachable ();
+      }
+  }
+  /* Two split cases:
+     (0) reg/subreg→reg post-reload: combine may create (zero_extend:SI
+         (subreg:HI (reg:SI N) 0)) from (and:SI N 0xFFFF); =&r ensures
+         op0 != op1.  Accept any non-MEM source (REG or SUBREG).
+         We avoid which_alternative here because it is not reliably set
+         when try_split is called from some passes.
+     (1) mem→reg pre-reload (!TARGET_HALF): split while pseudos are still
+         available; both the expand and combine can create this pattern.  */
+  "&& ((!MEM_P (operands[1])
+	&& reload_completed
+	&& !paradoxical_subreg_p (operands[0]))
+       || (!TARGET_HALF
+	   && MEM_P (operands[1])
+	   && can_create_pseudo_p ()))"
   [(const_int 0)]
   {
-    if (TARGET_SHIFT)
+    if (MEM_P (operands[1]))
       {
-        rtx sh  = GEN_INT (GET_MODE_BITSIZE (<GPR:MODE>mode) - 16);
-        rtx src = gen_rtx_REG (<GPR:MODE>mode, REGNO (operands[1]));
-        emit_insn (gen_rtx_SET (operands[0],
-                                gen_rtx_ASHIFT (<GPR:MODE>mode, src, sh)));
-        emit_insn (gen_rtx_SET (operands[0],
-                                gen_rtx_LSHIFTRT (<GPR:MODE>mode, operands[0], sh)));
+	/* Synthesize lhu: load aligned word, shift/mask out halfword.  */
+	rtx addr = force_reg (SImode, XEXP (operands[1], 0));
+	rtx t_neg4 = gen_reg_rtx (SImode);
+	emit_move_insn (t_neg4, GEN_INT (-4));
+	rtx t_aligned = gen_reg_rtx (SImode);
+	emit_insn (gen_andsi3 (t_aligned, addr, t_neg4));
+	rtx t_word = gen_reg_rtx (SImode);
+	emit_move_insn (t_word, gen_rtx_MEM (SImode, t_aligned));
+	rtx t2 = gen_reg_rtx (SImode);
+	emit_move_insn (t2, GEN_INT (2));
+	rtx t_half_off = gen_reg_rtx (SImode);
+	emit_insn (gen_andsi3 (t_half_off, addr, t2));
+	rtx t_bit_off = gen_reg_rtx (SImode);
+	emit_insn (gen_ashlsi3 (t_bit_off, t_half_off, GEN_INT (3)));
+	rtx t_shifted = gen_reg_rtx (SImode);
+	emit_insn (gen_lshrsi3 (t_shifted, t_word, t_bit_off));
+	rtx t_tmp = gen_reg_rtx (SImode);
+	emit_insn (gen_ashlsi3 (t_tmp, t_shifted, GEN_INT (16)));
+	emit_insn (gen_lshrsi3 (operands[0], t_tmp, GEN_INT (16)));
       }
     else
       {
-        /* No shift instructions: load mask into op0, then AND with source. */
-        rtx src = gen_rtx_REG (<GPR:MODE>mode, REGNO (operands[1]));
-        emit_move_insn (operands[0], GEN_INT (0xFFFF));
-        emit_insn (gen_and<GPR:mode>3 (operands[0], src, operands[0]));
+	/* Get the underlying hard register as GPR-mode regardless of
+	   whether operands[1] is REG or SUBREG.  For a subreg such as
+	   (subreg:HI (reg:SI N) 0) this gives the full SI register,
+	   which is safe: the AND/shift below discards the upper bits.
+	   SUBREG_BYTE != 0 only arises with TARGET_SHIFT (sc2+) and is
+	   handled by the lshiftrt path.  */
+	rtx src;
+	unsigned HOST_WIDE_INT boff = 0;
+	if (SUBREG_P (operands[1]))
+	  {
+	    boff = SUBREG_BYTE (operands[1]).to_constant ();
+	    src = gen_rtx_REG (<GPR:MODE>mode,
+			       REGNO (SUBREG_REG (operands[1])));
+	  }
+	else
+	  src = gen_rtx_REG (<GPR:MODE>mode, REGNO (operands[1]));
+
+	if (boff != 0)
+	  {
+	    /* Upper halfword: one logical right shift zero-extends.  */
+	    emit_insn (gen_rtx_SET (operands[0],
+				    gen_rtx_LSHIFTRT (<GPR:MODE>mode,
+						      src, GEN_INT (16))));
+	  }
+	else if (TARGET_SHIFT)
+	  {
+	    rtx sh = GEN_INT (GET_MODE_BITSIZE (<GPR:MODE>mode) - 16);
+	    emit_insn (gen_rtx_SET (operands[0],
+				    gen_rtx_ASHIFT (<GPR:MODE>mode, src, sh)));
+	    emit_insn (gen_rtx_SET (operands[0],
+				    gen_rtx_LSHIFTRT (<GPR:MODE>mode,
+						      operands[0], sh)));
+	  }
+	else
+	  {
+	    /* !TARGET_SHIFT (sc1): load mask into output then AND.
+	       =&r guarantees operands[0] != the underlying source reg.  */
+	    emit_move_insn (operands[0], GEN_INT (0xFFFF));
+	    emit_insn (gen_and<GPR:mode>3 (operands[0], src, operands[0]));
+	  }
       }
     DONE;
   }
@@ -2036,22 +2156,10 @@
 	    (match_operand:QI 1 "nonimmediate_operand")))]
   ""
 {
-  /* If the destination is not a full word, then do a zero extended
-     load to a full word and a sub-word extraction to get at the
-     appropriate low bits.  This enables more CSE of memory references
-     by having a canonical form.  That in turn can help other optimizations
-     as well.  */
-  if (<SUPERQI:MODE>mode != word_mode)
-    {
-      rtx tdest = gen_reg_rtx (word_mode);
-      emit_move_insn (tdest, gen_rtx_ZERO_EXTEND (word_mode, operands[1]));
-      tdest = gen_lowpart (<SUPERQI:MODE>mode, tdest);
-      SUBREG_PROMOTED_VAR_P (tdest) = 1;
-      SUBREG_PROMOTED_SET (tdest, SRP_UNSIGNED);
-      emit_move_insn (operands[0], tdest);
-      DONE;
-    }
-  /* sc1 synthesis: lbu addr → lw word, extract byte, zero-extend */
+  /* sc1 synthesis: lbu addr → lw word, extract byte, zero-extend.
+     Check MEM BEFORE the word_mode reshape: emit_move_insn does not call
+     define_expand, so delegating to it with (zero_extend:SI (mem:QI)) would
+     leave an unrecognizable insn when !TARGET_BYTE.  */
   if (!TARGET_BYTE && MEM_P (operands[1]))
     {
       rtx addr = force_reg (SImode, XEXP (operands[1], 0));
@@ -2069,9 +2177,31 @@
       emit_insn (gen_ashlsi3 (t_bit_off, t_byte_off, GEN_INT (3)));
       rtx t_shifted = gen_reg_rtx (SImode);
       emit_insn (gen_lshrsi3 (t_shifted, t_word, t_bit_off));
-      rtx t_tmp = gen_reg_rtx (SImode);
-      emit_insn (gen_ashlsi3 (t_tmp, t_shifted, GEN_INT (24)));
-      emit_insn (gen_lshrsi3 (operands[0], t_tmp, GEN_INT (24)));
+      rtx tdest = gen_reg_rtx (SImode);
+      emit_insn (gen_ashlsi3 (tdest, t_shifted, GEN_INT (24)));
+      emit_insn (gen_lshrsi3 (tdest, tdest, GEN_INT (24)));
+      /* For sub-word destinations, wrap the SI result in a promoted subreg. */
+      if (<SUPERQI:MODE>mode != word_mode)
+	{
+	  rtx res = gen_lowpart (<SUPERQI:MODE>mode, tdest);
+	  SUBREG_PROMOTED_VAR_P (res) = 1;
+	  SUBREG_PROMOTED_SET (res, SRP_UNSIGNED);
+	  emit_move_insn (operands[0], res);
+	}
+      else
+	emit_move_insn (operands[0], tdest);
+      DONE;
+    }
+  /* For sub-word destinations with non-MEM (register) source, load to a full
+     word first for better CSE of memory references.  */
+  if (<SUPERQI:MODE>mode != word_mode)
+    {
+      rtx tdest = gen_reg_rtx (word_mode);
+      emit_move_insn (tdest, gen_rtx_ZERO_EXTEND (word_mode, operands[1]));
+      tdest = gen_lowpart (<SUPERQI:MODE>mode, tdest);
+      SUBREG_PROMOTED_VAR_P (tdest) = 1;
+      SUBREG_PROMOTED_SET (tdest, SRP_UNSIGNED);
+      emit_move_insn (operands[0], tdest);
       DONE;
     }
 })
@@ -2143,22 +2273,10 @@
 	(sign_extend:SUPERQI (match_operand:SHORT 1 "nonimmediate_operand")))]
   ""
 {
-  /* If the destination is not a full word, then do a sign extended
-     load to a full word and a sub-word extraction to get at the
-     appropriate low bits.  This enables more CSE of memory references
-     by having a canonical form.  That in turn can help other optimizations
-     as well.  */
-  if (<SUPERQI:MODE>mode != word_mode)
-    {
-      rtx tdest = gen_reg_rtx (word_mode);
-      emit_move_insn (tdest, gen_rtx_SIGN_EXTEND (word_mode, operands[1]));
-      tdest = gen_lowpart (<SUPERQI:MODE>mode, tdest);
-      SUBREG_PROMOTED_VAR_P (tdest) = 1;
-      SUBREG_PROMOTED_SET (tdest, SRP_SIGNED);
-      emit_move_insn (operands[0], tdest);
-      DONE;
-    }
-  /* sc1 synthesis: lb/lh addr → lw word, extract byte/halfword, sign-extend */
+  /* sc1 synthesis: lb/lh addr → lw word, extract byte/halfword, sign-extend.
+     Check MEM BEFORE the word_mode reshape: emit_move_insn does not call
+     define_expand, so delegating to it with (sign_extend:SI (mem:QI)) would
+     leave an unrecognizable insn when !TARGET_BYTE.  */
   if (MEM_P (operands[1])
       && ((<SHORT:MODE>mode == QImode && !TARGET_BYTE)
 	  || (<SHORT:MODE>mode == HImode && !TARGET_HALF)))
@@ -2181,9 +2299,31 @@
       emit_insn (gen_ashlsi3 (t_bit_off, t_unit_off, GEN_INT (3)));
       rtx t_shifted = gen_reg_rtx (SImode);
       emit_insn (gen_lshrsi3 (t_shifted, t_word, t_bit_off));
-      rtx t_tmp = gen_reg_rtx (SImode);
-      emit_insn (gen_ashlsi3 (t_tmp, t_shifted, GEN_INT (shift_bits)));
-      emit_insn (gen_ashrsi3 (operands[0], t_tmp, GEN_INT (shift_bits)));
+      rtx tdest = gen_reg_rtx (SImode);
+      emit_insn (gen_ashlsi3 (tdest, t_shifted, GEN_INT (shift_bits)));
+      emit_insn (gen_ashrsi3 (tdest, tdest, GEN_INT (shift_bits)));
+      /* For sub-word destinations, wrap the SI result in a promoted subreg. */
+      if (<SUPERQI:MODE>mode != word_mode)
+	{
+	  rtx res = gen_lowpart (<SUPERQI:MODE>mode, tdest);
+	  SUBREG_PROMOTED_VAR_P (res) = 1;
+	  SUBREG_PROMOTED_SET (res, SRP_SIGNED);
+	  emit_move_insn (operands[0], res);
+	}
+      else
+	emit_move_insn (operands[0], tdest);
+      DONE;
+    }
+  /* For sub-word destinations with non-MEM source, load to a full word
+     first for better CSE.  */
+  if (<SUPERQI:MODE>mode != word_mode)
+    {
+      rtx tdest = gen_reg_rtx (word_mode);
+      emit_move_insn (tdest, gen_rtx_SIGN_EXTEND (word_mode, operands[1]));
+      tdest = gen_lowpart (<SUPERQI:MODE>mode, tdest);
+      SUBREG_PROMOTED_VAR_P (tdest) = 1;
+      SUBREG_PROMOTED_SET (tdest, SRP_SIGNED);
+      emit_move_insn (operands[0], tdest);
       DONE;
     }
   /* sc1: sign extend from QI/HI register (or subreg) without shifts.
@@ -2220,7 +2360,8 @@
   "!TARGET_ZBB && !TARGET_XTHEADBB && !TARGET_XTHEADMEMIDX
    && !TARGET_XANDESPERF
    && (!MEM_P (operands[1])
-       || (<SHORT:MODE>mode == HImode ? TARGET_HALF : TARGET_BYTE))"
+       || (<SHORT:MODE>mode == HImode ? TARGET_HALF : TARGET_BYTE))
+   && (MEM_P (operands[1]) || TARGET_SHIFT)"
   "@
    #
    l<SHORT:size>\t%0,%1"
