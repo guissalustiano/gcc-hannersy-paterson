@@ -663,9 +663,12 @@
 						    (const_int 4)
 						    (const_int 8))))
 
-	  ;; Conservatively assume calls take two instructions (AUIPC + JALR).
-	  ;; The linker will opportunistically relax the sequence to JAL.
-	  (eq_attr "type" "call") (const_int 8)
+	  ;; When !TARGET_AUIPC, symbolic calls use lui+addi+jalr (12 B).
+	  ;; Otherwise AUIPC+JALR (8 B), linker may relax to JAL (4 B).
+	  (eq_attr "type" "call")
+	  (if_then_else (match_test "!TARGET_AUIPC")
+			(const_int 12)
+			(const_int 8))
 
 	  ;; "Ghost" instructions occupy no space.
 	  (eq_attr "type" "ghost") (const_int 0)
@@ -2919,10 +2922,33 @@
   [(set (match_operand:HI 0 "register_operand"           "=r,r")
 	(xor:HI (match_operand:HISI 1 "register_operand" " r,r")
 		(match_operand:HISI 2 "arith_operand"    " r,I")))]
-  ""
+  "TARGET_XOR"
   "xor%i2\t%0,%1,%2"
   [(set_attr "type" "logical")
    (set_attr "mode" "HI")])
+
+;; HImode XOR synthesis when !TARGET_XOR: force operand2 to a register
+;; and apply the identity a XOR b = a + b - 2*(a&b).
+(define_insn_and_split "*xorhi3_noxor"
+  [(set (match_operand:HI 0 "register_operand" "=&r")
+        (xor:HI (match_operand:HISI 1 "register_operand" "r")
+                (match_operand:HISI 2 "arith_operand" "rI")))]
+  "!TARGET_XOR && !TARGET_64BIT"
+  "#"
+  "!TARGET_XOR && !TARGET_64BIT && can_create_pseudo_p ()"
+  [(const_int 0)]
+{
+  rtx op1 = gen_lowpart (SImode, operands[1]);
+  rtx op2 = (CONST_INT_P (operands[2])
+	      ? force_reg (SImode, gen_int_mode (INTVAL (operands[2]), SImode))
+	      : gen_lowpart (SImode, operands[2]));
+  rtx op0 = gen_lowpart (SImode, operands[0]);
+  emit_insn (gen_andsi3 (op0, op1, op2));
+  emit_insn (gen_addsi3 (op0, op0, op0));
+  emit_insn (gen_subsi3 (op0, op1, op0));
+  emit_insn (gen_addsi3 (op0, op0, op2));
+  DONE;
+})
 
 ;; 8-bit Integer moves
 
@@ -5006,10 +5032,18 @@
           (match_operand 2 "const_int_operand")
         ] UNSPEC_CALLEE_CC))]
   "SIBLING_CALL_P (insn)"
-  "@
-   jr\t%0
-   tail\t%0
-   tail\t%0@plt"
+{
+  switch (which_alternative)
+    {
+    case 0: return "jr\t%0";
+    case 1:
+    case 2:
+      if (!TARGET_AUIPC)
+	return "lui\tt0,%%hi(%0)\n\taddi\tt0,t0,%%lo(%0)\n\tjr\tt0";
+      return which_alternative == 1 ? "tail\t%0" : "tail\t%0@plt";
+    default: gcc_unreachable ();
+    }
+}
   [(set_attr "type" "call")])
 
 (define_expand "sibcall_value"
@@ -5035,10 +5069,18 @@
           (match_operand 3 "const_int_operand")
         ] UNSPEC_CALLEE_CC))]
   "SIBLING_CALL_P (insn)"
-  "@
-   jr\t%1
-   tail\t%1
-   tail\t%1@plt"
+{
+  switch (which_alternative)
+    {
+    case 0: return "jr\t%1";
+    case 1:
+    case 2:
+      if (!TARGET_AUIPC)
+	return "lui\tt0,%%hi(%1)\n\taddi\tt0,t0,%%lo(%1)\n\tjr\tt0";
+      return which_alternative == 1 ? "tail\t%1" : "tail\t%1@plt";
+    default: gcc_unreachable ();
+    }
+}
   [(set_attr "type" "call")])
 
 (define_expand "call"
@@ -5062,10 +5104,20 @@
         ] UNSPEC_CALLEE_CC))
    (clobber (reg:SI RETURN_ADDR_REGNUM))]
   ""
-  "@
-   jalr\t%0
-   call\t%0
-   call\t%0@plt"
+{
+  switch (which_alternative)
+    {
+    case 0: return "jalr\t%0";
+    case 1:
+    case 2:
+      if (!TARGET_AUIPC)
+	/* sc1: no AUIPC, so "call sym" would expand to auipc+jalr.
+	   Emit lui+addi+jalr instead (absolute address, sets ra).  */
+	return "lui\tt0,%%hi(%0)\n\taddi\tt0,t0,%%lo(%0)\n\tjalr\tra,0(t0)";
+      return which_alternative == 1 ? "call\t%0" : "call\t%0@plt";
+    default: gcc_unreachable ();
+    }
+}
   [(set_attr "type" "call")])
 
 (define_expand "call_value"
@@ -5092,10 +5144,18 @@
         ] UNSPEC_CALLEE_CC))
    (clobber (reg:SI RETURN_ADDR_REGNUM))]
   ""
-  "@
-   jalr\t%1
-   call\t%1
-   call\t%1@plt"
+{
+  switch (which_alternative)
+    {
+    case 0: return "jalr\t%1";
+    case 1:
+    case 2:
+      if (!TARGET_AUIPC)
+	return "lui\tt0,%%hi(%1)\n\taddi\tt0,t0,%%lo(%1)\n\tjalr\tra,0(t0)";
+      return which_alternative == 1 ? "call\t%1" : "call\t%1@plt";
+    default: gcc_unreachable ();
+    }
+}
   [(set_attr "type" "call")])
 
 ;; Call subroutine returning any type.
@@ -5133,7 +5193,12 @@
 (define_insn "trap"
   [(trap_if (const_int 1) (const_int 0))]
   ""
-  "ebreak"
+{
+  if (!TARGET_AUIPC)
+    /* sc0/sc1 have no trap instruction; spin forever instead. */
+    return "beq\tzero,zero,.";
+  return "ebreak";
+}
   [(set_attr "type" "trap")])
 
 ;; Must use the registers that we save to prevent the rename reg optimization
