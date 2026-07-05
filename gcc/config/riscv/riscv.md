@@ -1773,21 +1773,21 @@
   ""
 
 {
-  /* sc1 synthesis: a ^ b = ~(a & b) & (a | b)  [De Morgan] */
+  /* sc1 synthesis: a ^ b = (a | b) - (a & b).
+     Using sub instead of NOT avoids an instruction-scheduling hazard:
+     the old ~(a&b)&(a|b) form has no data edge between the OR and the
+     negation of AND, so RTL optimisers reorder them and the register
+     allocator then aliases neg to op1's register, corrupting ab_ior. */
   if ((<CODE>) == XOR && !TARGET_XOR)
     {
-      rtx op1     = operands[1];
-      rtx op2     = REG_P (operands[2]) ? operands[2]
-				        : force_reg (SImode, operands[2]);
-      rtx ab_and  = gen_reg_rtx (SImode);
-      rtx ab_ior  = gen_reg_rtx (SImode);
-      rtx neg     = gen_reg_rtx (SImode);
-      rtx not_and = gen_reg_rtx (SImode);
-      emit_insn (gen_andsi3 (ab_and,        op1, op2));
-      emit_insn (gen_iorsi3 (ab_ior,        op1, op2));
-      emit_insn (gen_subsi3 (neg,           const0_rtx, ab_and));
-      emit_insn (gen_addsi3 (not_and,       neg, GEN_INT (-1)));
-      emit_insn (gen_andsi3 (operands[0],   not_and, ab_ior));
+      rtx op1    = operands[1];
+      rtx op2    = REG_P (operands[2]) ? operands[2]
+				       : force_reg (SImode, operands[2]);
+      rtx ab_and = gen_reg_rtx (SImode);
+      rtx ab_ior = gen_reg_rtx (SImode);
+      emit_insn (gen_andsi3 (ab_and, op1, op2));
+      emit_insn (gen_iorsi3 (ab_ior, op1, op2));
+      emit_insn (gen_subsi3 (operands[0], ab_ior, ab_and));
       DONE;
     }
   /* sc1 synthesis: ori rd, rs, imm → li t, imm; or rd, rs, t */

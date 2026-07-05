@@ -12099,6 +12099,14 @@ riscv_conditional_register_usage (void)
       fixed_regs[VXRM_REGNUM] = call_used_regs[VXRM_REGNUM] = 1;
       fixed_regs[FRM_REGNUM] = call_used_regs[FRM_REGNUM] = 1;
     }
+
+  /* sc1/sc0 (!TARGET_AUIPC): branch-NE and unconditional jump synthesis
+     hardcode t1 (x6, reg 6) as a scratch register in their asm templates.
+     Since the clobber is not declared in the RTL pattern, the register
+     allocator can assign live values to t1, which are then silently
+     overwritten.  Reserve t1 as fixed to prevent this.  */
+  if (!TARGET_AUIPC)
+    fixed_regs[GP_REG_FIRST + 6] = call_used_regs[GP_REG_FIRST + 6] = 1;
 }
 
 /* Return a register priority for hard reg REGNO.  */
