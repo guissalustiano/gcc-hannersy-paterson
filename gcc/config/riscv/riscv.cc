@@ -4521,6 +4521,13 @@ riscv_rtx_costs (rtx x, machine_mode mode, int outer_code, int opno ATTRIBUTE_UN
       gcc_fallthrough ();
     case ASHIFTRT:
     case LSHIFTRT:
+      /* Synthesized shifts are very expensive — model their true cost so GCC
+	 doesn't aggressively inline/optimize code that uses them.  */
+      if (!TARGET_SHIFT && GET_MODE (x) == SImode)
+	{
+	  *total = COSTS_N_INSNS (CONSTANT_P (XEXP (x, 1)) ? 64 : 200);
+	  return true;
+	}
       *total = riscv_binary_cost (x, SINGLE_SHIFT_COST,
 				  CONSTANT_P (XEXP (x, 1)) ? 4 : 9);
       return false;
@@ -12107,6 +12114,7 @@ riscv_conditional_register_usage (void)
      overwritten.  Reserve t1 as fixed to prevent this.  */
   if (!TARGET_AUIPC)
     fixed_regs[GP_REG_FIRST + 6] = call_used_regs[GP_REG_FIRST + 6] = 1;
+
 }
 
 /* Return a register priority for hard reg REGNO.  */
