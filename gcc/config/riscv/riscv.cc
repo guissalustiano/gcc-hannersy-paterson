@@ -2065,10 +2065,11 @@ riscv_float_const_rtx_index_for_fli (rtx x)
 static bool
 riscv_legitimate_constant_p (machine_mode mode ATTRIBUTE_UNUSED, rtx x)
 {
-  /* !TARGET_LUI (rvsc0): constants that would normally use a lui instruction
-     must go through the constant pool instead (lw rd, %lo(pool)(x0)).  */
-  if (!TARGET_LUI && CONST_INT_P (x)
-      && LUI_OPERAND (INTVAL (x)) && !SMALL_OPERAND (INTVAL (x)))
+  /* !TARGET_LUI (rvsc0): any constant that can't be expressed as addi
+     (i.e. outside the 12-bit signed range) requires lui or a multi-step
+     sequence that includes lui.  Force all such constants into the pool so
+     they are loaded via lw rd, %lo(pool)(x0) instead.  */
+  if (!TARGET_LUI && CONST_INT_P (x) && !SMALL_OPERAND (INTVAL (x)))
     return false;
 
   /* With the post-reload usage, it seems best to just pass in FALSE
@@ -2086,9 +2087,9 @@ riscv_cannot_force_const_mem (machine_mode mode ATTRIBUTE_UNUSED, rtx x)
   enum riscv_symbol_type type;
   rtx base, offset;
 
-  /* !TARGET_LUI (rvsc0): constants that require lui must go to the pool.  */
-  if (!TARGET_LUI && CONST_INT_P (x)
-      && LUI_OPERAND (INTVAL (x)) && !SMALL_OPERAND (INTVAL (x)))
+  /* !TARGET_LUI (rvsc0): any constant outside 12-bit signed range must go
+     to the pool (same condition as riscv_legitimate_constant_p above).  */
+  if (!TARGET_LUI && CONST_INT_P (x) && !SMALL_OPERAND (INTVAL (x)))
     return false;
 
   /* There's no way to calculate VL-based values using relocations.  */

@@ -2154,6 +2154,16 @@
 				    gen_rtx_LSHIFTRT (<GPR:MODE>mode,
 						      operands[0], sh)));
 	  }
+	else if (!TARGET_LUI)
+	  {
+	    /* sc0: post-reload, can't create pseudos or pool entries.
+	       Build 0xFFFF = (1 << 16) - 1 via 16 add-self doublings.  */
+	    emit_move_insn (operands[0], const1_rtx);
+	    for (int i = 0; i < 16; i++)
+	      emit_insn (gen_addsi3 (operands[0], operands[0], operands[0]));
+	    emit_insn (gen_addsi3 (operands[0], operands[0], constm1_rtx));
+	    emit_insn (gen_and<GPR:mode>3 (operands[0], src, operands[0]));
+	  }
 	else
 	  {
 	    /* !TARGET_SHIFT (sc1): load mask into output then AND.
