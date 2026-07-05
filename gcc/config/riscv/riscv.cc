@@ -2065,6 +2065,12 @@ riscv_float_const_rtx_index_for_fli (rtx x)
 static bool
 riscv_legitimate_constant_p (machine_mode mode ATTRIBUTE_UNUSED, rtx x)
 {
+  /* !TARGET_LUI (rvsc0): constants that would normally use a lui instruction
+     must go through the constant pool instead (lw rd, %lo(pool)(x0)).  */
+  if (!TARGET_LUI && CONST_INT_P (x)
+      && LUI_OPERAND (INTVAL (x)) && !SMALL_OPERAND (INTVAL (x)))
+    return false;
+
   /* With the post-reload usage, it seems best to just pass in FALSE
      rather than pass ALLOW_NEW_PSEUDOS through the call chain.  */
   return riscv_const_insns (x, false) > 0;
@@ -2079,6 +2085,11 @@ riscv_cannot_force_const_mem (machine_mode mode ATTRIBUTE_UNUSED, rtx x)
 {
   enum riscv_symbol_type type;
   rtx base, offset;
+
+  /* !TARGET_LUI (rvsc0): constants that require lui must go to the pool.  */
+  if (!TARGET_LUI && CONST_INT_P (x)
+      && LUI_OPERAND (INTVAL (x)) && !SMALL_OPERAND (INTVAL (x)))
+    return false;
 
   /* There's no way to calculate VL-based values using relocations.  */
   subrtx_iterator::array_type array;
@@ -3018,6 +3029,14 @@ riscv_split_symbol (rtx temp, rtx addr, machine_mode mode, rtx *low_out)
 
       case SYMBOL_ABSOLUTE:
 	{
+	  if (!TARGET_LUI && CONSTANT_POOL_ADDRESS_P (addr))
+	    {
+	      /* rvsc0 constant pool: pool entries are placed at address < 2048
+		 by the linker script, so %hi(pool_sym) == 0 after linking.
+		 Use x0 as base: lw rd, %lo(pool_sym)(x0).  */
+	      *low_out = gen_rtx_LO_SUM (Pmode, gen_rtx_REG (Pmode, 0), addr);
+	      break;
+	    }
 	  rtx high = gen_rtx_HIGH (Pmode, copy_rtx (addr));
 	  high = riscv_force_temporary (temp, high);
 	  *low_out = gen_rtx_LO_SUM (Pmode, high, addr);

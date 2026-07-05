@@ -610,7 +610,25 @@
 ;; Length of instruction in bytes.
 (define_attr "length" ""
    (cond [
-	  ;; When !TARGET_AUIPC, jal and bne are unavailable so the assembler
+	  ;; sc0 (!TARGET_LUI): lui is unavailable; jumps and branches use
+	  ;; PC-relative beq exclusively.  Programs are single-function and short,
+	  ;; so all targets fit in the 12-bit beq range.
+	  ;; Unconditional jump: beq zero,zero,L (4 B).
+	  ;; NE branch: beq a,b,1f; beq zero,zero,L; 1: (8 B).
+	  ;; EQ branch: beq a,b,L (4 B) — native instruction, always short.
+	  (and (eq_attr "type" "jump")
+	       (match_test "!TARGET_LUI"))
+	  (const_int 4)
+
+	  (and (eq_attr "type" "branch")
+	       (match_test "!TARGET_LUI && GET_CODE (operands[1]) == NE"))
+	  (const_int 8)
+
+	  (and (eq_attr "type" "branch")
+	       (match_test "!TARGET_LUI && GET_CODE (operands[1]) == EQ"))
+	  (const_int 4)
+
+	  ;; When !TARGET_AUIPC (sc1), jal and bne are unavailable so the assembler
 	  ;; cannot relax branches.  GCC must emit full expansions itself.
 	  ;;
 	  ;; NE branch: always beq+lui+addi+jr (16 B).  The short form using
@@ -3648,8 +3666,20 @@
   rtx sign_mask2   = operands[10];
 
   /* Save sign bit (use li+and to avoid ANDI with large immediate). */
-  emit_move_insn (sign_bit, gen_int_mode (0x80000000UL, SImode));
-  emit_insn (gen_andsi3 (sign_bit, rs1, sign_bit));
+  if (!TARGET_LUI)
+    {
+      /* sc0: lui unavailable and pool forbidden post-reload.
+	 Compute 0x80000000 = 1 << 31 via 31 add-self doublings.  */
+      emit_move_insn (sign_bit, const1_rtx);
+      for (int i = 0; i < 31; i++)
+	emit_insn (gen_addsi3 (sign_bit, sign_bit, sign_bit));
+      emit_insn (gen_andsi3 (sign_bit, rs1, sign_bit));
+    }
+  else
+    {
+      emit_move_insn (sign_bit, gen_int_mode (0x80000000UL, SImode));
+      emit_insn (gen_andsi3 (sign_bit, rs1, sign_bit));
+    }
 
   /* Inline SRL synthesis. */
   emit_move_insn (operands[0], const0_rtx);
@@ -4259,11 +4289,17 @@
    || GET_CODE (operands[1]) == EQ || GET_CODE (operands[1]) == NE)"
 {
   if (!TARGET_BNE && GET_CODE (operands[1]) == NE)
-    /* NE synthesis: reverse condition to skip over lui+addi+jr unconditional jump.
-       Always 16 bytes; the short beq+beq_zero form is unsafe because GCC
-       branch-shortening can converge at a size where beq zero,zero hits an
-       assembler out-of-range expansion.  */
-    return "beq\t%2,%z3,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
+    {
+      if (!TARGET_LUI)
+	/* sc0: lui unavailable; use PC-relative beq zero,zero for the
+	   unconditional part.  Valid for short single-function programs.  */
+	return "beq\t%2,%z3,1f\n\tbeq\tzero,zero,%l0\n1:";
+      /* sc1 NE synthesis: reverse condition to skip over lui+addi+jr.
+	 Always 16 bytes; the short beq+beq_zero form is unsafe because GCC
+	 branch-shortening can converge at a size where beq zero,zero hits an
+	 assembler out-of-range expansion.  */
+      return "beq\t%2,%z3,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
+    }
 
   /* Long-range EQ (length==20): beq to lui-block, then unconditional
      beq zero,zero to skip it, then lui+addi+jr.  Avoids assembler
@@ -4991,8 +5027,13 @@
   [(set (pc) (label_ref (match_operand 0 "" "")))]
   ""
 {
+  if (!TARGET_LUI)
+    /* sc0: lui is unavailable; use PC-relative beq zero,zero.
+       Valid for single-function programs where all targets are in range.  */
+    return "beq\tzero,zero,%l0";
+
   if (!TARGET_AUIPC)
-    /* jal (PC-relative unconditional jump) is not available.
+    /* sc1: jal (PC-relative unconditional jump) is not available.
        Synthesise an absolute jump using lui+addi+jalr.
        Like the existing "jump pseudo" long form, this clobbers t1.  */
     return "lui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1";

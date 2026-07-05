@@ -428,6 +428,10 @@ mauipc
 Target Var(TARGET_AUIPC) Init(1)
 Enable auipc instruction emission (-mno-auipc uses absolute lui+lo12 addressing instead).
 
+mlui
+Target Var(TARGET_LUI) Init(1)
+Enable lui instruction (-mno-lui synthesizes large constants via constant pool lw from x0).
+
 mshift
 Target Var(TARGET_SHIFT) Init(1)
 Enable shift instruction emission (-mno-shift synthesizes sll via add; srl/sra unsupported).
