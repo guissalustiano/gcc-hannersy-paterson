@@ -5081,7 +5081,7 @@
 
 (define_insn "indirect_jump<mode>"
   [(set (pc) (match_operand:P 0 "register_operand" "l"))]
-  ""
+  "TARGET_LUI"
   "jr\t%0"
   [(set_attr "type" "jalr")
    (set_attr "mode" "none")])
@@ -5119,7 +5119,7 @@
 (define_insn "tablejump<mode>"
   [(set (pc) (match_operand:GPR 0 "register_operand" "l"))
    (use (label_ref (match_operand 1 "" "")))]
-  "!is_zicfilp_p ()"
+  "TARGET_LUI && !is_zicfilp_p ()"
   "jr\t%0"
   [(set_attr "type" "jalr")
    (set_attr "mode" "none")])
@@ -5353,7 +5353,7 @@
           (match_operand 2 "const_int_operand")
         ] UNSPEC_CALLEE_CC))
    (clobber (reg:SI RETURN_ADDR_REGNUM))]
-  ""
+  "TARGET_LUI"
 {
   switch (which_alternative)
     {
@@ -5393,7 +5393,7 @@
           (match_operand 3 "const_int_operand")
         ] UNSPEC_CALLEE_CC))
    (clobber (reg:SI RETURN_ADDR_REGNUM))]
-  ""
+  "TARGET_LUI"
 {
   switch (which_alternative)
     {
