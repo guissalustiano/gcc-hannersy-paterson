@@ -2036,7 +2036,15 @@
       else
 	{
 	  rtx mask = gen_reg_rtx (SImode);
-	  emit_move_insn (mask, gen_int_mode (0xFFFF, SImode));
+	  if (!TARGET_LUI)
+	    {
+	      emit_move_insn (mask, const1_rtx);
+	      for (int i = 0; i < 16; i++)
+		emit_insn (gen_addsi3 (mask, mask, mask));
+	      emit_insn (gen_addsi3 (mask, mask, constm1_rtx));
+	    }
+	  else
+	    emit_move_insn (mask, gen_int_mode (0xFFFF, SImode));
 	  emit_insn (gen_andsi3 (tdest, src_si, mask));
 	}
       emit_move_insn (operands[0], gen_lowpart (<GPR:MODE>mode, tdest));
@@ -2058,7 +2066,15 @@
       else
 	{
 	  rtx mask = gen_reg_rtx (SImode);
-	  emit_move_insn (mask, gen_int_mode (0xFFFF, SImode));
+	  if (!TARGET_LUI)
+	    {
+	      emit_move_insn (mask, const1_rtx);
+	      for (int i = 0; i < 16; i++)
+		emit_insn (gen_addsi3 (mask, mask, mask));
+	      emit_insn (gen_addsi3 (mask, mask, constm1_rtx));
+	    }
+	  else
+	    emit_move_insn (mask, gen_int_mode (0xFFFF, SImode));
 	  emit_insn (gen_andsi3 (tdest, src_si, mask));
 	}
       emit_move_insn (operands[0], gen_lowpart (<GPR:MODE>mode, tdest));
@@ -2364,14 +2380,35 @@
     {
       int narrow = GET_MODE_BITSIZE (<SHORT:MODE>mode);
       rtx src = gen_lowpart (SImode, operands[1]);
+      HOST_WIDE_INT mask_val = ((HOST_WIDE_INT)1 << narrow) - 1;
+      HOST_WIDE_INT sign_val = (HOST_WIDE_INT)1 << (narrow - 1);
+      /* sc0 (!TARGET_LUI): all non-SMALL_OPERAND constants go through the
+	 constant pool, which is placed in low memory for ISA tests but at
+	 0x80000000+ for behavioural tests.  Build large constants via
+	 doublings so no CONST_INT is ever injected into the RTL.  */
       rtx t1 = gen_reg_rtx (SImode);
-      emit_insn (gen_andsi3 (t1, src,
-			     gen_int_mode (((HOST_WIDE_INT)1 << narrow) - 1,
-					   SImode)));
+      if (!TARGET_LUI && !SMALL_OPERAND (mask_val))
+	{
+	  rtx t_mask = gen_reg_rtx (SImode);
+	  emit_move_insn (t_mask, const1_rtx);
+	  for (int i = 0; i < narrow; i++)
+	    emit_insn (gen_addsi3 (t_mask, t_mask, t_mask));
+	  emit_insn (gen_addsi3 (t_mask, t_mask, constm1_rtx));
+	  emit_insn (gen_andsi3 (t1, src, t_mask));
+	}
+      else
+	emit_insn (gen_andsi3 (t1, src, gen_int_mode (mask_val, SImode)));
       rtx t2 = gen_reg_rtx (SImode);
-      emit_insn (gen_andsi3 (t2, t1,
-			     gen_int_mode ((HOST_WIDE_INT)1 << (narrow - 1),
-					   SImode)));
+      if (!TARGET_LUI && !SMALL_OPERAND (sign_val))
+	{
+	  rtx t_sign = gen_reg_rtx (SImode);
+	  emit_move_insn (t_sign, const1_rtx);
+	  for (int i = 0; i < narrow - 1; i++)
+	    emit_insn (gen_addsi3 (t_sign, t_sign, t_sign));
+	  emit_insn (gen_andsi3 (t2, t1, t_sign));
+	}
+      else
+	emit_insn (gen_andsi3 (t2, t1, gen_int_mode (sign_val, SImode)));
       rtx t3 = gen_reg_rtx (SImode);
       emit_insn (gen_subsi3 (t3, const0_rtx, t2));
       rtx t4 = gen_reg_rtx (SImode);
@@ -3011,7 +3048,15 @@
 
       /* mask = 0xFFFF << bit_off; word &= ~mask */
       rtx t_mask    = gen_reg_rtx (SImode);
-      emit_move_insn (t_mask, GEN_INT (0xFFFF));
+      if (!TARGET_LUI)
+	{
+	  emit_move_insn (t_mask, const1_rtx);
+	  for (int i = 0; i < 16; i++)
+	    emit_insn (gen_addsi3 (t_mask, t_mask, t_mask));
+	  emit_insn (gen_addsi3 (t_mask, t_mask, constm1_rtx));
+	}
+      else
+	emit_move_insn (t_mask, GEN_INT (0xFFFF));
       emit_insn (gen_ashlsi3 (t_mask, t_mask, t_bit_off));
       rtx t_nmask   = gen_reg_rtx (SImode);
       emit_insn (gen_one_cmplsi2 (t_nmask, t_mask));
@@ -3019,7 +3064,15 @@
 
       /* val = (src & 0xFFFF) << bit_off; word |= val */
       rtx t_val     = gen_reg_rtx (SImode);
-      emit_move_insn (t_val, GEN_INT (0xFFFF));
+      if (!TARGET_LUI)
+	{
+	  emit_move_insn (t_val, const1_rtx);
+	  for (int i = 0; i < 16; i++)
+	    emit_insn (gen_addsi3 (t_val, t_val, t_val));
+	  emit_insn (gen_addsi3 (t_val, t_val, constm1_rtx));
+	}
+      else
+	emit_move_insn (t_val, GEN_INT (0xFFFF));
       emit_insn (gen_andsi3 (t_val,
                              gen_lowpart (SImode, force_reg (HImode, operands[1])),
                              t_val));
@@ -3052,7 +3105,15 @@
       emit_insn (gen_lshrsi3 (t_shifted, t_word, t_bit_off));
 
       rtx t_mask    = gen_reg_rtx (SImode);
-      emit_move_insn (t_mask, GEN_INT (0xFFFF));
+      if (!TARGET_LUI)
+	{
+	  emit_move_insn (t_mask, const1_rtx);
+	  for (int i = 0; i < 16; i++)
+	    emit_insn (gen_addsi3 (t_mask, t_mask, t_mask));
+	  emit_insn (gen_addsi3 (t_mask, t_mask, constm1_rtx));
+	}
+      else
+	emit_move_insn (t_mask, GEN_INT (0xFFFF));
       rtx t_result  = gen_reg_rtx (SImode);
       emit_insn (gen_andsi3 (t_result, t_shifted, t_mask));
       emit_move_insn (operands[0], gen_lowpart (HImode, t_result));
