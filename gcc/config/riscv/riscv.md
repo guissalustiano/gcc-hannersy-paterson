@@ -3640,13 +3640,13 @@
 
 ;; LSHIFTRT synthesis — 4 scratch registers.
 (define_insn_and_split "lshrsi3_sc1"
-  [(set (match_operand:SI 0 "register_operand" "=&r")
+  [(set (match_operand:SI 0 "register_operand" "=&yr")
         (lshiftrt:SI (match_operand:SI 1 "register_operand"  "r")
                      (match_operand:SI 2 "register_operand"  "r")))
-   (clobber (match_scratch:SI 3 "=&r"))
-   (clobber (match_scratch:SI 4 "=&r"))
-   (clobber (match_scratch:SI 5 "=&r"))
-   (clobber (match_scratch:SI 6 "=&r"))]
+   (clobber (match_scratch:SI 3 "=&yr"))
+   (clobber (match_scratch:SI 4 "=&yr"))
+   (clobber (match_scratch:SI 5 "=&yr"))
+   (clobber (match_scratch:SI 6 "=&yr"))]
   "!TARGET_SHIFT"
   "#"
   "reload_completed"
@@ -3710,17 +3710,17 @@
 
 ;; ASHIFTRT synthesis — 8 scratch registers.
 (define_insn_and_split "ashrsi3_sc1"
-  [(set (match_operand:SI 0 "register_operand" "=&r")
+  [(set (match_operand:SI 0 "register_operand" "=&yr")
         (ashiftrt:SI (match_operand:SI 1 "register_operand"  "r")
                      (match_operand:SI 2 "register_operand"  "r")))
-   (clobber (match_scratch:SI 3  "=&r"))
-   (clobber (match_scratch:SI 4  "=&r"))
-   (clobber (match_scratch:SI 5  "=&r"))
-   (clobber (match_scratch:SI 6  "=&r"))
-   (clobber (match_scratch:SI 7  "=&r"))
-   (clobber (match_scratch:SI 8  "=&r"))
-   (clobber (match_scratch:SI 9  "=&r"))
-   (clobber (match_scratch:SI 10 "=&r"))]
+   (clobber (match_scratch:SI 3  "=&yr"))
+   (clobber (match_scratch:SI 4  "=&yr"))
+   (clobber (match_scratch:SI 5  "=&yr"))
+   (clobber (match_scratch:SI 6  "=&yr"))
+   (clobber (match_scratch:SI 7  "=&yr"))
+   (clobber (match_scratch:SI 8  "=&yr"))
+   (clobber (match_scratch:SI 9  "=&yr"))
+   (clobber (match_scratch:SI 10 "=&yr"))]
   "!TARGET_SHIFT"
   "#"
   "reload_completed"
@@ -3834,10 +3834,10 @@
 
 ;; Variable ASHIFT synthesis — 1 scratch register for the countdown.
 (define_insn_and_split "ashlsi3_sc1_var"
-  [(set (match_operand:SI 0 "register_operand" "=&r")
+  [(set (match_operand:SI 0 "register_operand" "=&yr")
         (ashift:SI (match_operand:SI 1 "register_operand"  "r")
                    (match_operand:SI 2 "register_operand"  "r")))
-   (clobber (match_scratch:SI 3 "=&r"))]
+   (clobber (match_scratch:SI 3 "=&yr"))]
   "!TARGET_SHIFT"
   "#"
   "reload_completed"
@@ -4378,77 +4378,41 @@
   if (get_attr_length (insn) == 20)
     return "beq\t%2,%z3,1f\n\tbeq\tzero,zero,2f\n1:\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n2:";
 
-  /* When !TARGET_SLT, synthesise signed/unsigned ordered branches using only
-     the rvsc1 allowlist: sub, addi, and, or, lui, beq, jalr.
-     XOR(x,y) is expanded via De Morgan: ~(x&y) & (x|y).
-     NOT(x) is expanded as: sub(zero,x); addi -1.                           */
+  /* When !TARGET_SLT, ordered comparisons never reach this insn: the
+     condition above requires TARGET_SLT for any code other than EQ/NE, and
+     @cbranch<mode>4 (above) intercepts LT/GE/LTU/GEU beforehand, emitting
+     its own IRA-allocated SLT/SLTU synthesis into pseudos.  The blocks below
+     therefore only ever run with TARGET_SLT set; gcc_unreachable guards the
+     case where that invariant is violated.                                */
   if (!TARGET_BGE && GET_CODE (operands[1]) == GE)
     {
       if (!TARGET_SLT)
-	/* SLT synthesis (signed): corrected_diff = (diff ^ overflow);
-	   overflow = xor(a,b) & xor(a,diff).  Branch if bit31==0 (a>=b).  */
-	return
-	  "sub\tt1,%2,%z3\n\t"
-	  "and\tt2,%2,%z3\n\tsub\tt3,zero,t2\n\taddi\tt3,t3,-1\n\t"
-	  "or\tt2,%2,%z3\n\tand\tt2,t3,t2\n\t"
-	  "and\tt3,%2,t1\n\tsub\tt4,zero,t3\n\taddi\tt4,t4,-1\n\t"
-	  "or\tt3,%2,t1\n\tand\tt3,t4,t3\n\t"
-	  "and\tt2,t2,t3\n\t"
-	  "and\tt3,t1,t2\n\tsub\tt4,zero,t3\n\taddi\tt4,t4,-1\n\t"
-	  "or\tt3,t1,t2\n\tand\tt3,t4,t3\n\t"
-	  "lui\tt2,0x80000\n\tand\tt3,t3,t2\n\t"
-	  "beq\tt3,zero,%l0";
+	/* Unreachable: see @cbranch<mode>4 intercept above.  */
+	gcc_unreachable ();
       return "slt\tt1,%2,%z3\n\tbeq\tt1,zero,%l0";
     }
 
   if (!TARGET_BLT && GET_CODE (operands[1]) == LT)
     {
       if (!TARGET_SLT)
-	/* Same SLT synthesis; branch if bit31==1 (a<b), synthesised BNE.   */
-	return
-	  "sub\tt1,%2,%z3\n\t"
-	  "and\tt2,%2,%z3\n\tsub\tt3,zero,t2\n\taddi\tt3,t3,-1\n\t"
-	  "or\tt2,%2,%z3\n\tand\tt2,t3,t2\n\t"
-	  "and\tt3,%2,t1\n\tsub\tt4,zero,t3\n\taddi\tt4,t4,-1\n\t"
-	  "or\tt3,%2,t1\n\tand\tt3,t4,t3\n\t"
-	  "and\tt2,t2,t3\n\t"
-	  "and\tt3,t1,t2\n\tsub\tt4,zero,t3\n\taddi\tt4,t4,-1\n\t"
-	  "or\tt3,t1,t2\n\tand\tt3,t4,t3\n\t"
-	  "lui\tt2,0x80000\n\tand\tt3,t3,t2\n\t"
-	  "beq\tt3,zero,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
+	/* Unreachable: see @cbranch<mode>4 intercept above.  */
+	gcc_unreachable ();
       return "slt\tt1,%2,%z3\n\tbeq\tt1,zero,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
     }
 
   if (!TARGET_BGEU && GET_CODE (operands[1]) == GEU)
     {
       if (!TARGET_SLT)
-	/* SLTU synthesis (unsigned): borrow = (~a & b) | (~xor(a,b) & diff).
-	   Branch if bit31(borrow)==0 (a>=u b).                              */
-	return
-	  "sub\tt1,%2,%z3\n\t"
-	  "sub\tt2,zero,%2\n\taddi\tt2,t2,-1\n\tand\tt2,t2,%z3\n\t"
-	  "and\tt3,%2,%z3\n\tsub\tt4,zero,t3\n\taddi\tt4,t4,-1\n\t"
-	  "or\tt3,%2,%z3\n\tand\tt3,t4,t3\n\t"
-	  "sub\tt4,zero,t3\n\taddi\tt4,t4,-1\n\tand\tt3,t4,t1\n\t"
-	  "or\tt2,t2,t3\n\t"
-	  "lui\tt3,0x80000\n\tand\tt3,t2,t3\n\t"
-	  "beq\tt3,zero,%l0";
+	/* Unreachable: see @cbranch<mode>4 intercept above.  */
+	gcc_unreachable ();
       return "sltu\tt1,%2,%z3\n\tbeq\tt1,zero,%l0";
     }
 
   if (!TARGET_BLTU && GET_CODE (operands[1]) == LTU)
     {
       if (!TARGET_SLT)
-	/* Same SLTU synthesis; branch if bit31(borrow)==1 (a<u b).         */
-	return
-	  "sub\tt1,%2,%z3\n\t"
-	  "sub\tt2,zero,%2\n\taddi\tt2,t2,-1\n\tand\tt2,t2,%z3\n\t"
-	  "and\tt3,%2,%z3\n\tsub\tt4,zero,t3\n\taddi\tt4,t4,-1\n\t"
-	  "or\tt3,%2,%z3\n\tand\tt3,t4,t3\n\t"
-	  "sub\tt4,zero,t3\n\taddi\tt4,t4,-1\n\tand\tt3,t4,t1\n\t"
-	  "or\tt2,t2,t3\n\t"
-	  "lui\tt3,0x80000\n\tand\tt3,t2,t3\n\t"
-	  "beq\tt3,zero,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
+	/* Unreachable: see @cbranch<mode>4 intercept above.  */
+	gcc_unreachable ();
       return "sltu\tt1,%2,%z3\n\tbeq\tt1,zero,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
     }
 
