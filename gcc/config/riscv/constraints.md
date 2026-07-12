@@ -37,6 +37,12 @@
 (define_register_constraint "l" "JALR_REGS"
   "@internal")
 
+;; General purpose register except ra (x1).  Used for scratch registers of
+;; the rvsc1 post-reload shift syntheses: allocating a scratch to ra would
+;; corrupt the return address when the function ends in a sibcall.
+(define_register_constraint "yr" "NORA_REGS"
+  "@internal")
+
 (define_register_constraint "cr" "RVC_GR_REGS"
   "RVC general purpose register (x8-x15).")
 
