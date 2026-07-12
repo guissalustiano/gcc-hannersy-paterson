@@ -3331,6 +3331,27 @@ riscv_legitimize_address (rtx x, rtx oldx ATTRIBUTE_UNUSED,
   return x;
 }
 
+/* Synthesize VAL (which must be 2^N or 2^N - 1 for some N) into DEST
+   without lui, for !TARGET_LUI (sc0) targets, via repeated add-self
+   doubling starting from 1.  Writes only to DEST -- no pseudos are
+   created -- so this is safe to call both before and after reload.  */
+
+rtx
+riscv_emit_const_no_lui (machine_mode mode, rtx dest, HOST_WIDE_INT val)
+{
+  unsigned HOST_WIDE_INT uval = (unsigned HOST_WIDE_INT) val;
+  bool minus_one = (uval & (uval + 1)) == 0;
+  int n = exact_log2 (minus_one ? uval + 1 : uval);
+  gcc_assert (n >= 0);
+
+  emit_move_insn (dest, gen_int_mode (1, mode));
+  for (int i = 0; i < n; i++)
+    emit_insn (gen_add3_insn (dest, dest, dest));
+  if (minus_one)
+    emit_insn (gen_add3_insn (dest, dest, gen_int_mode (-1, mode)));
+  return dest;
+}
+
 /* Load VALUE into DEST.  TEMP is as for riscv_force_temporary.  ORIG_MODE
    is the original src mode before promotion.  */
 
@@ -5665,6 +5686,42 @@ riscv_emit_float_compare (enum rtx_code *code, rtx *op0, rtx *op1,
 
     default:
       gcc_unreachable ();
+    }
+}
+
+/* Emit the sub/xor/and-based synthesis of (A < B) into DEST, for use when
+   !TARGET_SLT.  UNSIGNEDP selects the sltu form; otherwise slt.  Shared by
+   the @cbranch<mode>4 and cstore<mode>4 expanders.  */
+
+void
+riscv_emit_slt_synth (rtx dest, rtx a, rtx b, bool unsignedp)
+{
+  rtx diff = gen_reg_rtx (SImode);
+  rtx t1   = gen_reg_rtx (SImode);
+  rtx t2   = gen_reg_rtx (SImode);
+  emit_insn (gen_subsi3 (diff, a, b));
+
+  if (!unsignedp)
+    {
+      /* rd = ((a - b) corrected for signed overflow) >> 31.
+	 overflow = (a^b) & (a^diff); corrected = diff ^ overflow.  */
+      emit_insn (gen_xorsi3 (t1, a, b));
+      emit_insn (gen_xorsi3 (t2, a, diff));
+      emit_insn (gen_andsi3 (t1, t1, t2));
+      emit_insn (gen_xorsi3 (diff, diff, t1));
+      emit_insn (gen_lshrsi3 (dest, diff, GEN_INT (31)));
+    }
+  else
+    {
+      /* rd = borrow >> 31.  borrow = (~a & b) | (~(a^b) & diff).  */
+      rtx t3 = gen_reg_rtx (SImode);
+      emit_insn (gen_one_cmplsi2 (t1, a));
+      emit_insn (gen_andsi3 (t2, t1, b));
+      emit_insn (gen_xorsi3 (t3, a, b));
+      emit_insn (gen_one_cmplsi2 (t3, t3));
+      emit_insn (gen_andsi3 (t3, t3, diff));
+      emit_insn (gen_iorsi3 (t2, t2, t3));
+      emit_insn (gen_lshrsi3 (dest, t2, GEN_INT (31)));
     }
 }
 

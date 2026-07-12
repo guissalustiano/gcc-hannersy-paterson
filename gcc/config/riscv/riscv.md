@@ -2037,12 +2037,7 @@
 	{
 	  rtx mask = gen_reg_rtx (SImode);
 	  if (!TARGET_LUI)
-	    {
-	      emit_move_insn (mask, const1_rtx);
-	      for (int i = 0; i < 16; i++)
-		emit_insn (gen_addsi3 (mask, mask, mask));
-	      emit_insn (gen_addsi3 (mask, mask, constm1_rtx));
-	    }
+	    riscv_emit_const_no_lui (SImode, mask, 0xFFFF);
 	  else
 	    emit_move_insn (mask, gen_int_mode (0xFFFF, SImode));
 	  emit_insn (gen_andsi3 (tdest, src_si, mask));
@@ -2067,12 +2062,7 @@
 	{
 	  rtx mask = gen_reg_rtx (SImode);
 	  if (!TARGET_LUI)
-	    {
-	      emit_move_insn (mask, const1_rtx);
-	      for (int i = 0; i < 16; i++)
-		emit_insn (gen_addsi3 (mask, mask, mask));
-	      emit_insn (gen_addsi3 (mask, mask, constm1_rtx));
-	    }
+	    riscv_emit_const_no_lui (SImode, mask, 0xFFFF);
 	  else
 	    emit_move_insn (mask, gen_int_mode (0xFFFF, SImode));
 	  emit_insn (gen_andsi3 (tdest, src_si, mask));
@@ -2173,11 +2163,8 @@
 	else if (!TARGET_LUI)
 	  {
 	    /* sc0: post-reload, can't create pseudos or pool entries.
-	       Build 0xFFFF = (1 << 16) - 1 via 16 add-self doublings.  */
-	    emit_move_insn (operands[0], const1_rtx);
-	    for (int i = 0; i < 16; i++)
-	      emit_insn (gen_addsi3 (operands[0], operands[0], operands[0]));
-	    emit_insn (gen_addsi3 (operands[0], operands[0], constm1_rtx));
+	       riscv_emit_const_no_lui writes only into operands[0].  */
+	    riscv_emit_const_no_lui (<GPR:MODE>mode, operands[0], 0xFFFF);
 	    emit_insn (gen_and<GPR:mode>3 (operands[0], src, operands[0]));
 	  }
 	else
@@ -2390,10 +2377,7 @@
       if (!TARGET_LUI && !SMALL_OPERAND (mask_val))
 	{
 	  rtx t_mask = gen_reg_rtx (SImode);
-	  emit_move_insn (t_mask, const1_rtx);
-	  for (int i = 0; i < narrow; i++)
-	    emit_insn (gen_addsi3 (t_mask, t_mask, t_mask));
-	  emit_insn (gen_addsi3 (t_mask, t_mask, constm1_rtx));
+	  riscv_emit_const_no_lui (SImode, t_mask, mask_val);
 	  emit_insn (gen_andsi3 (t1, src, t_mask));
 	}
       else
@@ -2402,9 +2386,7 @@
       if (!TARGET_LUI && !SMALL_OPERAND (sign_val))
 	{
 	  rtx t_sign = gen_reg_rtx (SImode);
-	  emit_move_insn (t_sign, const1_rtx);
-	  for (int i = 0; i < narrow - 1; i++)
-	    emit_insn (gen_addsi3 (t_sign, t_sign, t_sign));
+	  riscv_emit_const_no_lui (SImode, t_sign, sign_val);
 	  emit_insn (gen_andsi3 (t2, t1, t_sign));
 	}
       else
@@ -3049,12 +3031,7 @@
       /* mask = 0xFFFF << bit_off; word &= ~mask */
       rtx t_mask    = gen_reg_rtx (SImode);
       if (!TARGET_LUI)
-	{
-	  emit_move_insn (t_mask, const1_rtx);
-	  for (int i = 0; i < 16; i++)
-	    emit_insn (gen_addsi3 (t_mask, t_mask, t_mask));
-	  emit_insn (gen_addsi3 (t_mask, t_mask, constm1_rtx));
-	}
+	riscv_emit_const_no_lui (SImode, t_mask, 0xFFFF);
       else
 	emit_move_insn (t_mask, GEN_INT (0xFFFF));
       emit_insn (gen_ashlsi3 (t_mask, t_mask, t_bit_off));
@@ -3065,12 +3042,7 @@
       /* val = (src & 0xFFFF) << bit_off; word |= val */
       rtx t_val     = gen_reg_rtx (SImode);
       if (!TARGET_LUI)
-	{
-	  emit_move_insn (t_val, const1_rtx);
-	  for (int i = 0; i < 16; i++)
-	    emit_insn (gen_addsi3 (t_val, t_val, t_val));
-	  emit_insn (gen_addsi3 (t_val, t_val, constm1_rtx));
-	}
+	riscv_emit_const_no_lui (SImode, t_val, 0xFFFF);
       else
 	emit_move_insn (t_val, GEN_INT (0xFFFF));
       emit_insn (gen_andsi3 (t_val,
@@ -3106,12 +3078,7 @@
 
       rtx t_mask    = gen_reg_rtx (SImode);
       if (!TARGET_LUI)
-	{
-	  emit_move_insn (t_mask, const1_rtx);
-	  for (int i = 0; i < 16; i++)
-	    emit_insn (gen_addsi3 (t_mask, t_mask, t_mask));
-	  emit_insn (gen_addsi3 (t_mask, t_mask, constm1_rtx));
-	}
+	riscv_emit_const_no_lui (SImode, t_mask, 0xFFFF);
       else
 	emit_move_insn (t_mask, GEN_INT (0xFFFF));
       rtx t_result  = gen_reg_rtx (SImode);
@@ -3168,15 +3135,18 @@
   "!TARGET_XOR && !TARGET_64BIT && can_create_pseudo_p ()"
   [(const_int 0)]
 {
+  /* a ^ b = (a | b) - (a & b); see the SImode xor synthesis above for why
+     sub (not NOT) is used to keep a data edge into the final result.  */
   rtx op1 = gen_lowpart (SImode, operands[1]);
   rtx op2 = (CONST_INT_P (operands[2])
 	      ? force_reg (SImode, gen_int_mode (INTVAL (operands[2]), SImode))
 	      : gen_lowpart (SImode, operands[2]));
   rtx op0 = gen_lowpart (SImode, operands[0]);
-  emit_insn (gen_andsi3 (op0, op1, op2));
-  emit_insn (gen_addsi3 (op0, op0, op0));
-  emit_insn (gen_subsi3 (op0, op1, op0));
-  emit_insn (gen_addsi3 (op0, op0, op2));
+  rtx ab_and = gen_reg_rtx (SImode);
+  rtx ab_ior = gen_reg_rtx (SImode);
+  emit_insn (gen_andsi3 (ab_and, op1, op2));
+  emit_insn (gen_iorsi3 (ab_ior, op1, op2));
+  emit_insn (gen_subsi3 (op0, ab_ior, ab_and));
   DONE;
 })
 
@@ -3740,10 +3710,8 @@
   if (!TARGET_LUI)
     {
       /* sc0: lui unavailable and pool forbidden post-reload.
-	 Compute 0x80000000 = 1 << 31 via 31 add-self doublings.  */
-      emit_move_insn (sign_bit, const1_rtx);
-      for (int i = 0; i < 31; i++)
-	emit_insn (gen_addsi3 (sign_bit, sign_bit, sign_bit));
+	 riscv_emit_const_no_lui writes only into sign_bit.  */
+      riscv_emit_const_no_lui (SImode, sign_bit, HOST_WIDE_INT_1 << 31);
       emit_insn (gen_andsi3 (sign_bit, rs1, sign_bit));
     }
   else
@@ -4517,33 +4485,7 @@
             }
 
           rtx tmp = gen_reg_rtx (SImode);
-          if (code == LT)
-            {
-              rtx diff = gen_reg_rtx (SImode);
-              rtx t1   = gen_reg_rtx (SImode);
-              rtx t2   = gen_reg_rtx (SImode);
-              emit_insn (gen_subsi3 (diff, op0, op1));
-              emit_insn (gen_xorsi3 (t1, op0, op1));
-              emit_insn (gen_xorsi3 (t2, op0, diff));
-              emit_insn (gen_andsi3 (t1, t1, t2));
-              emit_insn (gen_xorsi3 (diff, diff, t1));
-              emit_insn (gen_lshrsi3 (tmp, diff, GEN_INT (31)));
-            }
-          else
-            {
-              rtx diff = gen_reg_rtx (SImode);
-              rtx t1   = gen_reg_rtx (SImode);
-              rtx t2   = gen_reg_rtx (SImode);
-              rtx t3   = gen_reg_rtx (SImode);
-              emit_insn (gen_subsi3 (diff, op0, op1));
-              emit_insn (gen_one_cmplsi2 (t1, op0));
-              emit_insn (gen_andsi3 (t2, t1, op1));
-              emit_insn (gen_xorsi3 (t3, op0, op1));
-              emit_insn (gen_one_cmplsi2 (t3, t3));
-              emit_insn (gen_andsi3 (t3, t3, diff));
-              emit_insn (gen_iorsi3 (t2, t2, t3));
-              emit_insn (gen_lshrsi3 (tmp, t2, GEN_INT (31)));
-            }
+          riscv_emit_slt_synth (tmp, op0, op1, code == LTU);
           riscv_expand_conditional_branch (operands[3],
                                            use_eq ? EQ : NE,
                                            tmp, const0_rtx);
@@ -4760,37 +4702,7 @@
 
       rtx result = invert ? gen_reg_rtx (SImode) : operands[0];
 
-      if (code == LT)
-        {
-          /* slt synthesis: rd = ((a - b) corrected for signed overflow) >> 31.
-             overflow = (a^b) & (a^diff); corrected = diff ^ overflow. */
-          rtx diff = gen_reg_rtx (SImode);
-          rtx t1   = gen_reg_rtx (SImode);
-          rtx t2   = gen_reg_rtx (SImode);
-          emit_insn (gen_subsi3 (diff, op0, op1));
-          emit_insn (gen_xorsi3 (t1, op0, op1));
-          emit_insn (gen_xorsi3 (t2, op0, diff));
-          emit_insn (gen_andsi3 (t1, t1, t2));
-          emit_insn (gen_xorsi3 (diff, diff, t1));
-          emit_insn (gen_lshrsi3 (result, diff, GEN_INT (31)));
-        }
-      else
-        {
-          /* sltu synthesis: rd = borrow >> 31.
-             borrow = (~a & b) | (~(a^b) & diff). */
-          rtx diff = gen_reg_rtx (SImode);
-          rtx t1   = gen_reg_rtx (SImode);
-          rtx t2   = gen_reg_rtx (SImode);
-          rtx t3   = gen_reg_rtx (SImode);
-          emit_insn (gen_subsi3 (diff, op0, op1));
-          emit_insn (gen_one_cmplsi2 (t1, op0));
-          emit_insn (gen_andsi3 (t2, t1, op1));
-          emit_insn (gen_xorsi3 (t3, op0, op1));
-          emit_insn (gen_one_cmplsi2 (t3, t3));
-          emit_insn (gen_andsi3 (t3, t3, diff));
-          emit_insn (gen_iorsi3 (t2, t2, t3));
-          emit_insn (gen_lshrsi3 (result, t2, GEN_INT (31)));
-        }
+      riscv_emit_slt_synth (result, op0, op1, code == LTU);
 
       if (invert)
         {
