@@ -893,8 +893,9 @@
   else
     {
       emit_insn (gen_add3_insn (operands[0], operands[1], operands[2]));
-      riscv_expand_conditional_branch (operands[3], LTU, operands[0],
-				       operands[1]);
+      rtx cond = gen_rtx_LTU (VOIDmode, operands[0], operands[1]);
+      emit_jump_insn (gen_cbranch4 (<MODE>mode, cond, operands[0],
+				    operands[1], operands[3]));
     }
 
   DONE;
@@ -1078,8 +1079,9 @@
   else
     {
       emit_insn (gen_sub3_insn (operands[0], operands[1], operands[2]));
-      riscv_expand_conditional_branch (operands[3], LTU, operands[1],
-				       operands[0]);
+      rtx cond = gen_rtx_LTU (VOIDmode, operands[1], operands[0]);
+      emit_jump_insn (gen_cbranch4 (<MODE>mode, cond, operands[1],
+				    operands[0], operands[3]));
     }
 
   DONE;
