@@ -1356,7 +1356,7 @@ riscv*-*-freebsd*)
 	extra_parts="$extra_parts crtbegin.o crtend.o crti.o crtn.o crtendS.o crtbeginT.o"
 	;;
 rvsc*-*-*)
-	tmake_file="${tmake_file} riscv/t-rvsc riscv/t-elf${host_address}"
+	tmake_file="${tmake_file} riscv/t-softfp${host_address} t-softfp riscv/t-rvsc riscv/t-elf${host_address}"
 	extra_parts="$extra_parts crtbegin.o crtend.o crti.o crtn.o"
 	;;
 riscv*-*-*)

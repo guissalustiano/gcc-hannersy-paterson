@@ -19,3 +19,11 @@ HOST_LIBGCC2_CFLAGS += -O0
 # Functions that trigger ICEs with rvsc synthesis restrictions (no FP ISA, no shifts).
 # HC (half-precision complex) and DI→SF float conversions generate unrecognizable insns.
 LIB2FUNCS_EXCLUDE += _mulhc3 _divhc3 _floatdisf _floatundisf
+
+# _BitInt(N) <-> tf (128-bit quad long double) conversions ICE in
+# instantiate_virtual_regs regardless of optimization level. These come from
+# t-softfp32's softfp_extras and aren't reachable via LIB2FUNCS_EXCLUDE (soft-fp
+# files bypass that filter -- see libgcc/config/t-softfp), so drop them from
+# LIB2ADD directly, same technique as the multi3.c replacement above. C23
+# _BitInt is not used anywhere in this project's torture-test corpus.
+LIB2ADD := $(filter-out %floatbitinttf.c %fixtfbitint.c,$(LIB2ADD))
