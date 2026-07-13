@@ -361,9 +361,40 @@ ARCH_UNSET_CLEANUP_SPECS \
 /* Select a register mode required for caller save of hard regno REGNO.
    Contrary to what is documented, the default is not the smallest suitable
    mode but the largest suitable mode for the given (REGNO, NREGS) pair and
-   it quickly creates paradoxical subregs that can be problematic.  */
+   it quickly creates paradoxical subregs that can be problematic.
+
+   sc0/sc1: when a concrete MODE is requested (not VOIDmode), it is echoed
+   back unchanged by default. For HImode/QImode with !TARGET_HALF/
+   !TARGET_BYTE this is wrong: those modes have no single-instruction
+   memory access at all (see the movhi/movqi expands' SImode-based
+   load/store synthesis in riscv.md), but LRA's caller-save mechanism
+   builds save/restore RTL directly in the requested mode without ever
+   going through those expands, so it needs a mode with a plain, valid
+   memory access. Widen to SImode instead: the value already occupies a
+   full 32-bit hard register, so saving/restoring all 32 bits is safe
+   regardless of the pseudo's logical mode (see pr108789.c mul()).  */
 #define HARD_REGNO_CALLER_SAVE_MODE(REGNO, NREGS, MODE) \
-  ((MODE) == VOIDmode ? choose_hard_reg_mode (REGNO, NREGS, NULL) : (MODE))
+  ((MODE) == VOIDmode ? choose_hard_reg_mode (REGNO, NREGS, NULL) \
+   : (MODE) == HImode && !TARGET_HALF ? SImode \
+   : (MODE) == QImode && !TARGET_BYTE ? SImode \
+   : (MODE))
+
+/* sc0/sc1: force HImode/QImode stack objects (including LRA spill slots,
+   which always call this with TYPE == NULL_TREE) to full-word alignment
+   when !TARGET_HALF/!TARGET_BYTE. Without this, a spilled HImode/QImode
+   pseudo can land at a memory address whose offset within the containing
+   32-bit word (bit_off) is only known at run time, which would force the
+   movhi_internal_noload / movqi_internal_noload memory-alternative split
+   (riscv.md) to synthesize a run-time shift -- impossible post-reload on
+   sc1, since shift-by-variable-amount synthesis itself needs new pseudos
+   (see the ASHIFT/LSHIFTRT synthesis in riscv.md). Forcing word alignment
+   instead makes bit_off always a compile-time-known 0, so that split can
+   use plain AND/OR/register-move only (see pr108789.c mul()).  */
+#define STACK_SLOT_ALIGNMENT(TYPE, MODE, ALIGN)			\
+  ((((MODE) == HImode && !TARGET_HALF)					\
+    || ((MODE) == QImode && !TARGET_BYTE))				\
+   ? BITS_PER_WORD							\
+   : (TYPE) ? LOCAL_ALIGNMENT ((TYPE), (ALIGN)) : (ALIGN))
 
 /* Internal macros to classify an ISA register's type.  */
 

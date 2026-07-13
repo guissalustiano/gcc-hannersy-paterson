@@ -3090,6 +3090,24 @@
     }
   if (riscv_legitimize_move (HImode, operands[0], operands[1]))
     DONE;
+  /* sc1: route every remaining (register/constant, non-memory) HImode move
+     through the full movhi_internal_noload generator explicitly, rather
+     than relying on this expand's implicit final-template auto-emit. The
+     implicit auto-emit produces a bare (set op0 op1) with no clobbers,
+     whose recognition is deferred; but movhi_internal_noload (below) now
+     requires two match_scratch clobbers structurally present in every insn
+     that matches it (needed for the r,m/m,r escape-valve alternatives --
+     see that pattern's comment), so a bare clobber-less SET can never
+     recog against it and ICEs as "unrecognizable insn" at the vregs pass.
+     The generator embeds the match_scratch operands as plain (scratch:SI)
+     placeholders automatically (they aren't caller-supplied arguments);
+     LRA only allocates them a real hard register if it ends up picking
+     one of the r,m/m,r alternatives that actually needs them.  */
+  if (!TARGET_HALF)
+    {
+      emit_insn (gen_movhi_internal_noload (operands[0], operands[1]));
+      DONE;
+    }
 })
 
 (define_insn "*movhi_internal"
@@ -3097,12 +3115,115 @@
 	(match_operand:HI 1 "move_operand"	   " r,T,Bh,rJ,*r*J,*f,vp"))]
   "(register_operand (operands[0], HImode)
     || reg_or_0_operand (operands[1], HImode))
-   && (TARGET_HALF || (!MEM_P (operands[0]) && !MEM_P (operands[1])))"
+   && TARGET_HALF"
   { return riscv_output_move (operands[0], operands[1]); }
   [(set_attr "move_type" "move,const,load,store,mtc,mfc,rdvlenb")
    (set_attr "mode" "HI")
    (set_attr "type" "move,move,load,store,mtc,mfc,move")
    (set_attr "ext" "base,base,base,base,f,f,vector")])
+
+;; sc1: when !TARGET_HALF, HImode has no legal single-instruction memory
+;; access at all (see the movhi expand's SImode-based load/store synthesis
+;; above). This pattern intentionally offers no memory-class alternative:
+;; the Bh memory constraint's match_test (TARGET_HALF) is not reliably
+;; honored by LRA's alternative-costing heuristic when reloading a spilled
+;; pseudo into a *new* memory slot (it happily "chooses" the Bh alternative
+;; there, producing an insn that only fails much later at the final
+;; check_rtl consistency pass -- see pr108789.c mul()). Omitting the
+;; alternative entirely, rather than relying on the constraint's runtime
+;; predicate, forces LRA to reload through a register instead, which in
+;; turn invokes the movhi expand's synthesis for the actual memory access.
+;; The yr,yr (NORA_REGS) alternative is required, not just a nice-to-have:
+;; a plain reg-reg alternative restricted to "r" (GR_REGS) alone leaves LRA
+;; unable to converge when a HImode pseudo's live range crosses a call insn
+;; (which clobbers ra, forcing NORA_REGS). Without a same-class copy
+;; alternative, LRA's reload-insertion for such a pseudo repeatedly
+;; discovers the freshly created GR_REGS copy also needs NORA_REGS, spawns
+;; another GR_REGS copy to fix it, discovers *that* also needs NORA_REGS,
+;; and so on -- an unbounded chain that trips the "maximum number of
+;; generated reload insns per insn" safety valve (see pr108789.c mul()).
+;; The old *movhi_internal (with its Bh memory alternative) accidentally
+;; avoided this by letting LRA escape into an (invalid, for !TARGET_HALF)
+;; memory operand instead, trading this infinite loop for the original
+;; check_rtl ICE. yr,yr gives LRA a real, valid same-class alternative so
+;; the narrowing converges in one step. yr,yr is listed FIRST: LRA's
+;; alternative costing gives it the exact same cost as the plain =r,r
+;; alternative (both are "free" reg-reg copies), and on a tie LRA picks
+;; whichever alternative comes first -- so =r,r first would keep winning
+;; the tie and the narrowing-loop would still fire.
+;;
+;; Even with yr,yr converging the class-narrowing case, a *different*
+;; infinite loop remains possible: a HImode move between two not-yet
+;; hard-reg-assigned pseudos, where the destination structurally needs
+;; NORA_REGS, can hit LRA's own move-cycle heuristic (lra-constraints.cc,
+;; "Cycle danger: overall += LRA_MAX_REJECT") on EVERY register
+;; alternative at once, because that heuristic specifically targets
+;; register-to-register move insns and neither alternative's operands have
+;; "won" a hard register yet. With no non-register alternative to fall
+;; back to, LRA has no escape and keeps re-splitting the move into a fresh
+;; register copy forever, tripping the "maximum number of generated reload
+;; insns" safety valve (see pr108789.c mul(), -O1). The mem alternatives
+;; below (r,m and m,r) restore a real escape valve, without reintroducing
+;; the original Bh bug, by only ever being reachable post-reload (the
+;; movhi expand above always intercepts genuine source-level memory moves
+;; first) and by synthesizing the access as an aligned SImode load/store
+;; plus AND/OR masking -- no shift required, because STACK_SLOT_ALIGNMENT
+;; (riscv.h) forces HImode stack/spill slots to full-word alignment when
+;; !TARGET_HALF, so the bit offset within the containing word is always a
+;; compile-time 0. That matters because shifting by a run-time offset
+;; would itself need loop-based synthesis (new pseudos), illegal
+;; post-reload; a fixed offset of 0 needs none.
+(define_insn_and_split "movhi_internal_noload"
+  [(set (match_operand:HI 0 "nonimmediate_operand" "=yr, r, r,  r,  m")
+	(match_operand:HI 1 "general_operand"        " yr, r, T,  m,  r"))
+   (clobber (match_scratch:SI 2                     "= X, X, X, &r, &r"))
+   (clobber (match_scratch:SI 3                     "= X, X, X,  X, &r"))]
+  "(register_operand (operands[0], HImode)
+    || reg_or_0_operand (operands[1], HImode))
+   && !TARGET_HALF"
+  {
+    switch (which_alternative)
+      {
+      case 0: case 1: case 2:
+	return riscv_output_move (operands[0], operands[1]);
+      case 3: case 4:
+	return "#";
+      default:
+	gcc_unreachable ();
+      }
+  }
+  "&& reload_completed
+   && (MEM_P (operands[0]) || MEM_P (operands[1]))"
+  [(const_int 0)]
+{
+  rtx mem = MEM_P (operands[0]) ? operands[0] : operands[1];
+  rtx word_mem = adjust_address_nv (mem, SImode, 0);
+
+  if (MEM_P (operands[1]))
+    {
+      /* Fill: dst = word & 0xFFFF.  */
+      rtx dst_si = gen_rtx_REG (SImode, REGNO (operands[0]));
+      emit_move_insn (operands[2], word_mem);
+      emit_move_insn (dst_si, GEN_INT (0xFFFF));
+      emit_insn (gen_andsi3 (dst_si, operands[2], dst_si));
+    }
+  else
+    {
+      /* Spill: word = (word & ~0xFFFF) | (src & 0xFFFF).  */
+      rtx src_si = gen_rtx_REG (SImode, REGNO (operands[1]));
+      emit_move_insn (operands[2], word_mem);
+      emit_move_insn (operands[3], GEN_INT (-65536)); /* ~0xFFFF */
+      emit_insn (gen_andsi3 (operands[2], operands[2], operands[3]));
+      emit_move_insn (operands[3], GEN_INT (0xFFFF));
+      emit_insn (gen_andsi3 (operands[3], src_si, operands[3]));
+      emit_insn (gen_iorsi3 (operands[2], operands[2], operands[3]));
+      emit_move_insn (word_mem, operands[2]);
+    }
+  DONE;
+}
+  [(set_attr "move_type" "move,move,const,load,store")
+   (set_attr "mode" "HI")
+   (set_attr "type" "move,move,move,load,store")])
 
 ;; HImode constant generation; see riscv_move_integer for details.
 ;; si+si->hi without truncation is legal because of
@@ -3231,6 +3352,16 @@
     }
   if (riscv_legitimize_move (QImode, operands[0], operands[1]))
     DONE;
+  /* sc1: same rationale as the movhi expand's equivalent intercept above --
+     route every remaining register/constant QImode move through the full
+     movqi_internal_noload generator explicitly so the insn is born with
+     its required match_scratch clobbers already present, instead of
+     falling through to this expand's implicit clobber-less auto-emit.  */
+  if (!TARGET_BYTE)
+    {
+      emit_insn (gen_movqi_internal_noload (operands[0], operands[1]));
+      DONE;
+    }
 })
 
 (define_insn "*movqi_internal"
@@ -3238,12 +3369,72 @@
 	(match_operand:QI 1 "move_operand"         " r,I,Bq,rJ,*r*J,*f,vp"))]
   "(register_operand (operands[0], QImode)
     || reg_or_0_operand (operands[1], QImode))
-   && (TARGET_BYTE || (!MEM_P (operands[0]) && !MEM_P (operands[1])))"
+   && TARGET_BYTE"
   { return riscv_output_move (operands[0], operands[1]); }
   [(set_attr "move_type" "move,const,load,store,mtc,mfc,rdvlenb")
    (set_attr "mode" "QI")
    (set_attr "type" "move,move,load,store,mtc,mfc,move")
    (set_attr "ext" "base,base,base,base,f,f,vector")])
+
+;; sc1: same rationale as movhi_internal_noload above, for QImode/TARGET_BYTE
+;; -- the yr,yr alternative is required to let LRA converge when a QImode
+;; pseudo's live range crosses a call insn (needs NORA_REGS), and it must
+;; be listed FIRST so it wins ties against =r,r (see movhi_internal_noload).
+;; The r,m and m,r alternatives are the same LRA move-cycle escape valve as
+;; movhi_internal_noload, with the same post-reload-only, shift-free,
+;; aligned-word AND/OR synthesis (STACK_SLOT_ALIGNMENT forces QImode
+;; stack/spill slots to full-word alignment too when !TARGET_BYTE).
+(define_insn_and_split "movqi_internal_noload"
+  [(set (match_operand:QI 0 "nonimmediate_operand" "=yr, r, r,  r,  m")
+	(match_operand:QI 1 "general_operand"        " yr, r, I,  m,  r"))
+   (clobber (match_scratch:SI 2                     "= X, X, X, &r, &r"))
+   (clobber (match_scratch:SI 3                     "= X, X, X,  X, &r"))]
+  "(register_operand (operands[0], QImode)
+    || reg_or_0_operand (operands[1], QImode))
+   && !TARGET_BYTE"
+  {
+    switch (which_alternative)
+      {
+      case 0: case 1: case 2:
+	return riscv_output_move (operands[0], operands[1]);
+      case 3: case 4:
+	return "#";
+      default:
+	gcc_unreachable ();
+      }
+  }
+  "&& reload_completed
+   && (MEM_P (operands[0]) || MEM_P (operands[1]))"
+  [(const_int 0)]
+{
+  rtx mem = MEM_P (operands[0]) ? operands[0] : operands[1];
+  rtx word_mem = adjust_address_nv (mem, SImode, 0);
+
+  if (MEM_P (operands[1]))
+    {
+      /* Fill: dst = word & 0xFF.  */
+      rtx dst_si = gen_rtx_REG (SImode, REGNO (operands[0]));
+      emit_move_insn (operands[2], word_mem);
+      emit_move_insn (dst_si, GEN_INT (0xFF));
+      emit_insn (gen_andsi3 (dst_si, operands[2], dst_si));
+    }
+  else
+    {
+      /* Spill: word = (word & ~0xFF) | (src & 0xFF).  */
+      rtx src_si = gen_rtx_REG (SImode, REGNO (operands[1]));
+      emit_move_insn (operands[2], word_mem);
+      emit_move_insn (operands[3], GEN_INT (-256)); /* ~0xFF */
+      emit_insn (gen_andsi3 (operands[2], operands[2], operands[3]));
+      emit_move_insn (operands[3], GEN_INT (0xFF));
+      emit_insn (gen_andsi3 (operands[3], src_si, operands[3]));
+      emit_insn (gen_iorsi3 (operands[2], operands[2], operands[3]));
+      emit_move_insn (word_mem, operands[2]);
+    }
+  DONE;
+}
+  [(set_attr "move_type" "move,move,const,load,store")
+   (set_attr "mode" "QI")
+   (set_attr "type" "move,move,move,load,store")])
 
 ;; 32-bit floating point moves
 
