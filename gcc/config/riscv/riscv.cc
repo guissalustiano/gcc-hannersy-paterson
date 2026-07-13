@@ -4333,6 +4333,20 @@ riscv_rtx_costs (rtx x, machine_mode mode, int outer_code, int opno ATTRIBUTE_UN
 	  return true;
 	}
 
+      /* Synthesized sub-word stores (movqi/movhi via !TARGET_BYTE /
+	 !TARGET_HALF) are read-modify-write sequences (lw, mask, or, sw);
+	 model their true cost so GCC doesn't freely duplicate/hoist them.  */
+      if (MEM_P (SET_DEST (x)))
+	{
+	  machine_mode dest_mode = GET_MODE (SET_DEST (x));
+	  if ((dest_mode == QImode && !TARGET_BYTE)
+	      || (dest_mode == HImode && !TARGET_HALF))
+	    {
+	      *total = COSTS_N_INSNS (dest_mode == QImode ? 100 : 105);
+	      return true;
+	    }
+	}
+
       /* Otherwise return FALSE indicating we should recurse into both the
 	 SET_DEST and SET_SRC combining the cost of both.  */
       return false;
@@ -4484,6 +4498,14 @@ riscv_rtx_costs (rtx x, machine_mode mode, int outer_code, int opno ATTRIBUTE_UN
       gcc_fallthrough ();
     case IOR:
     case XOR:
+      /* Synthesized xor (!TARGET_XOR) expands to (a|b)-(a&b): and+or+sub,
+	 3 insns; model the true cost so GCC doesn't freely
+	 duplicate/inline/hoist it.  */
+      if (GET_CODE (x) == XOR && !TARGET_XOR && GET_MODE (x) == SImode)
+	{
+	  *total = COSTS_N_INSNS (3);
+	  return true;
+	}
       /* orn, andn and xorn pattern for zbb.  */
       if (TARGET_ZBB
 	  && GET_CODE (XEXP (x, 0)) == NOT)
@@ -4598,6 +4620,15 @@ riscv_rtx_costs (rtx x, machine_mode mode, int outer_code, int opno ATTRIBUTE_UN
     case GTU:
     case GE:
     case GEU:
+      /* Synthesized ordered comparisons (!TARGET_SLT) expand slt/sltu via a
+	 long sub/xor/and/lshr sequence; model their true cost so GCC doesn't
+	 freely duplicate/inline/hoist them.  */
+      if (!TARGET_SLT && GET_MODE (XEXP (x, 0)) == SImode)
+	{
+	  *total = COSTS_N_INSNS (65);
+	  return true;
+	}
+      /* Fall through.  */
     case EQ:
     case NE:
       /* Branch comparisons have VOIDmode, so use the first operand's
@@ -4811,6 +4842,20 @@ riscv_rtx_costs (rtx x, machine_mode mode, int outer_code, int opno ATTRIBUTE_UN
 	}
       /* Fall through.  */
     case SIGN_EXTEND:
+      /* Synthesized sub-word loads (lb/lbu/lh/lhu via !TARGET_BYTE /
+	 !TARGET_HALF) expand to an aligned word load plus mask/shift
+	 extraction; model their true cost so GCC doesn't freely
+	 duplicate/inline/hoist them.  */
+      if (MEM_P (XEXP (x, 0)))
+	{
+	  machine_mode inner_mode = GET_MODE (XEXP (x, 0));
+	  if ((inner_mode == QImode && !TARGET_BYTE)
+	      || (inner_mode == HImode && !TARGET_HALF))
+	    {
+	      *total = COSTS_N_INSNS (75);
+	      return true;
+	    }
+	}
       *total = riscv_extend_cost (XEXP (x, 0), GET_CODE (x) == ZERO_EXTEND);
       return false;
 
