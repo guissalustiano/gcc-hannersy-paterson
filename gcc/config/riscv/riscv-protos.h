@@ -153,6 +153,8 @@ extern void riscv_expand_float_scc (rtx, enum rtx_code, rtx, rtx,
 				    bool *invert_ptr = nullptr);
 extern void riscv_expand_conditional_branch (rtx, enum rtx_code, rtx, rtx);
 extern void riscv_emit_slt_synth (rtx, rtx, rtx, bool);
+extern void riscv_emit_xor_scratch (rtx, rtx, rtx, rtx, rtx);
+extern void riscv_emit_not_scratch (rtx, rtx);
 extern rtx riscv_emit_unary (enum rtx_code code, rtx dest, rtx x);
 extern rtx riscv_emit_binary (enum rtx_code code, rtx dest, rtx x, rtx y);
 #endif

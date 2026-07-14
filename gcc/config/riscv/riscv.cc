@@ -5845,6 +5845,32 @@ riscv_emit_slt_synth (rtx dest, rtx a, rtx b, bool unsignedp)
     }
 }
 
+/* DEST = A ^ B, computed via the (a|b)-(a&b) identity using the explicit
+   SImode scratch registers XA and XB, instead of calling gen_xorsi3.  When
+   !TARGET_XOR, gen_xorsi3 unconditionally calls gen_reg_rtx for its own
+   temporaries (see the "<optab><mode>3" expand's XOR case), which asserts
+   if called after reload -- this variant is safe to call from a
+   post-reload split.  DEST may alias A, B, XA, or XB.  */
+
+void
+riscv_emit_xor_scratch (rtx dest, rtx a, rtx b, rtx xa, rtx xb)
+{
+  emit_insn (gen_andsi3 (xa, a, b));
+  emit_insn (gen_iorsi3 (xb, a, b));
+  emit_insn (gen_subsi3 (dest, xb, xa));
+}
+
+/* DEST = ~SRC, computed via -SRC - 1 instead of calling gen_one_cmplsi2,
+   which has the same post-reload gen_reg_rtx hazard as gen_xorsi3 above
+   when !TARGET_XOR.  DEST may alias SRC.  */
+
+void
+riscv_emit_not_scratch (rtx dest, rtx src)
+{
+  emit_insn (gen_subsi3 (dest, const0_rtx, src));
+  emit_insn (gen_addsi3 (dest, dest, GEN_INT (-1)));
+}
+
 /* CODE-compare OP0 and OP1.  Store the result in TARGET.  */
 
 void
@@ -14104,6 +14130,22 @@ riscv_extend_to_xmode_reg (rtx x, machine_mode mode, enum rtx_code rcode)
   return force_reg (Xmode, t);
 }
 
+/* Like riscv_emit_binary, but CODE must be LT or LTU and the result is a
+   0/1 value (not a branch).  When !TARGET_SLT no define_insn matches the
+   raw comparison RTL riscv_emit_binary would build here (only the explicit
+   cstore<mode>4/riscv_expand_int_scc path synthesizes it), so route through
+   riscv_emit_slt_synth instead.  */
+
+static void
+riscv_emit_binary_scc (enum rtx_code code, rtx dest, rtx x, rtx y)
+{
+  gcc_assert (code == LT || code == LTU);
+  if (!TARGET_SLT)
+    riscv_emit_slt_synth (dest, x, y, code == LTU);
+  else
+    riscv_emit_binary (code, dest, x, y);
+}
+
 /* Implements the unsigned saturation add standard name usadd for int mode.
 
    z = SAT_ADD(x, y).
@@ -14140,7 +14182,7 @@ riscv_expand_usadd (rtx dest, rtx x, rtx y)
     }
 
   /* Step-2: lt = sum < x  */
-  riscv_emit_binary (LTU, xmode_lt, xmode_sum, xmode_x);
+  riscv_emit_binary_scc (LTU, xmode_lt, xmode_sum, xmode_x);
 
   /* Step-3: lt = -lt  */
   riscv_emit_unary (NEG, xmode_lt, xmode_lt);
@@ -14224,7 +14266,7 @@ riscv_expand_ssadd (rtx dest, rtx x, rtx y)
   riscv_emit_binary (AND, xmode_and, xmode_and, CONST1_RTX (Xmode));
 
   /* Step-3: lt = x < 0, neg = -lt  */
-  riscv_emit_binary (LT, xmode_lt, xmode_x, CONST0_RTX (Xmode));
+  riscv_emit_binary_scc (LT, xmode_lt, xmode_x, CONST0_RTX (Xmode));
   riscv_emit_unary (NEG, xmode_neg, xmode_lt);
 
   /* Step-4: max = 0x7f..., max = max ^ neg, neg = -and, max = max & neg  */
@@ -14265,7 +14307,7 @@ riscv_expand_ussub (rtx dest, rtx x, rtx y)
   riscv_emit_binary (MINUS, xmode_minus, xmode_x, xmode_y);
 
   /* Step-2: lt = x < y  */
-  riscv_emit_binary (LTU, xmode_lt, xmode_x, xmode_y);
+  riscv_emit_binary_scc (LTU, xmode_lt, xmode_x, xmode_y);
 
   /* Step-3: lt = lt - 1 (lt + (-1))  */
   riscv_emit_binary (PLUS, xmode_lt, xmode_lt, CONSTM1_RTX (Xmode));
@@ -14328,7 +14370,7 @@ riscv_expand_sssub (rtx dest, rtx x, rtx y)
   riscv_emit_binary (AND, xmode_and, xmode_and, CONST1_RTX (Xmode));
 
   /* Step-3: lt = x < 0, neg = -lt.  */
-  riscv_emit_binary (LT, xmode_lt, xmode_x, CONST0_RTX (Xmode));
+  riscv_emit_binary_scc (LT, xmode_lt, xmode_x, CONST0_RTX (Xmode));
   riscv_emit_unary (NEG, xmode_neg, xmode_lt);
 
   /* Step-4: max = 0x7f..., max = max ^ neg, neg = -and, max = max & neg.  */

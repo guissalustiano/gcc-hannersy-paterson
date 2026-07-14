@@ -2079,107 +2079,144 @@
 	(zero_extend:GPR
 	    (match_operand:HI 1 "nonimmediate_operand"   "   r,  m")))]
   "!TARGET_ZBB && !TARGET_XTHEADBB && !TARGET_XTHEADMEMIDX
-   && !TARGET_XANDESPERF
-   && (!MEM_P (operands[1]) || TARGET_HALF)"
+   && !TARGET_XANDESPERF && TARGET_HALF"
   {
     switch (which_alternative)
       {
       case 0: return "#";
-      case 1: return TARGET_HALF ? "lhu\t%0,%1" : "#";
+      case 1: return "lhu\t%0,%1";
       default: gcc_unreachable ();
       }
   }
-  /* Two split cases:
-     (0) reg/subreg→reg post-reload: combine may create (zero_extend:SI
-         (subreg:HI (reg:SI N) 0)) from (and:SI N 0xFFFF); =&r ensures
-         op0 != op1.  Accept any non-MEM source (REG or SUBREG).
-         We avoid which_alternative here because it is not reliably set
-         when try_split is called from some passes.
-     (1) mem→reg pre-reload (!TARGET_HALF): split while pseudos are still
-         available; both the expand and combine can create this pattern.  */
-  "&& ((!MEM_P (operands[1])
-	&& reload_completed
-	&& !paradoxical_subreg_p (operands[0]))
-       || (!TARGET_HALF
-	   && MEM_P (operands[1])
-	   && can_create_pseudo_p ()))"
+  /* reg/subreg->reg post-reload: combine may create (zero_extend:SI
+     (subreg:HI (reg:SI N) 0)) from (and:SI N 0xFFFF); =&r ensures
+     op0 != op1.  Accept any non-MEM source (REG or SUBREG).
+     We avoid which_alternative here because it is not reliably set
+     when try_split is called from some passes.  */
+  "&& !MEM_P (operands[1])
+   && reload_completed
+   && !paradoxical_subreg_p (operands[0])"
   [(const_int 0)]
   {
-    if (MEM_P (operands[1]))
+    /* Get the underlying hard register as GPR-mode regardless of
+       whether operands[1] is REG or SUBREG.  For a subreg such as
+       (subreg:HI (reg:SI N) 0) this gives the full SI register,
+       which is safe: the AND/shift below discards the upper bits.
+       SUBREG_BYTE != 0 only arises with TARGET_SHIFT (sc2+) and is
+       handled by the lshiftrt path.  */
+    rtx src;
+    unsigned HOST_WIDE_INT boff = 0;
+    if (SUBREG_P (operands[1]))
       {
-	/* Synthesize lhu: load aligned word, shift/mask out halfword.  */
-	rtx addr = force_reg (SImode, XEXP (operands[1], 0));
-	rtx t_neg4 = gen_reg_rtx (SImode);
-	emit_move_insn (t_neg4, GEN_INT (-4));
-	rtx t_aligned = gen_reg_rtx (SImode);
-	emit_insn (gen_andsi3 (t_aligned, addr, t_neg4));
-	rtx t_word = gen_reg_rtx (SImode);
-	emit_move_insn (t_word, gen_rtx_MEM (SImode, t_aligned));
-	rtx t2 = gen_reg_rtx (SImode);
-	emit_move_insn (t2, GEN_INT (2));
-	rtx t_half_off = gen_reg_rtx (SImode);
-	emit_insn (gen_andsi3 (t_half_off, addr, t2));
-	rtx t_bit_off = gen_reg_rtx (SImode);
-	emit_insn (gen_ashlsi3 (t_bit_off, t_half_off, GEN_INT (3)));
-	rtx t_shifted = gen_reg_rtx (SImode);
-	emit_insn (gen_lshrsi3 (t_shifted, t_word, t_bit_off));
-	rtx t_tmp = gen_reg_rtx (SImode);
-	emit_insn (gen_ashlsi3 (t_tmp, t_shifted, GEN_INT (16)));
-	emit_insn (gen_lshrsi3 (operands[0], t_tmp, GEN_INT (16)));
+	boff = SUBREG_BYTE (operands[1]).to_constant ();
+	src = gen_rtx_REG (<GPR:MODE>mode,
+			   REGNO (SUBREG_REG (operands[1])));
+      }
+    else
+      src = gen_rtx_REG (<GPR:MODE>mode, REGNO (operands[1]));
+
+    if (boff != 0)
+      {
+	/* Upper halfword: one logical right shift zero-extends.  */
+	emit_insn (gen_rtx_SET (operands[0],
+				gen_rtx_LSHIFTRT (<GPR:MODE>mode,
+						  src, GEN_INT (16))));
+      }
+    else if (TARGET_SHIFT)
+      {
+	rtx sh = GEN_INT (GET_MODE_BITSIZE (<GPR:MODE>mode) - 16);
+	emit_insn (gen_rtx_SET (operands[0],
+				gen_rtx_ASHIFT (<GPR:MODE>mode, src, sh)));
+	emit_insn (gen_rtx_SET (operands[0],
+				gen_rtx_LSHIFTRT (<GPR:MODE>mode,
+						  operands[0], sh)));
+      }
+    else if (!TARGET_LUI)
+      {
+	/* sc0: post-reload, can't create pseudos or pool entries.
+	   riscv_emit_const_no_lui writes only into operands[0].  */
+	riscv_emit_const_no_lui (<GPR:MODE>mode, operands[0], 0xFFFF);
+	emit_insn (gen_and<GPR:mode>3 (operands[0], src, operands[0]));
       }
     else
       {
-	/* Get the underlying hard register as GPR-mode regardless of
-	   whether operands[1] is REG or SUBREG.  For a subreg such as
-	   (subreg:HI (reg:SI N) 0) this gives the full SI register,
-	   which is safe: the AND/shift below discards the upper bits.
-	   SUBREG_BYTE != 0 only arises with TARGET_SHIFT (sc2+) and is
-	   handled by the lshiftrt path.  */
-	rtx src;
-	unsigned HOST_WIDE_INT boff = 0;
-	if (SUBREG_P (operands[1]))
-	  {
-	    boff = SUBREG_BYTE (operands[1]).to_constant ();
-	    src = gen_rtx_REG (<GPR:MODE>mode,
-			       REGNO (SUBREG_REG (operands[1])));
-	  }
-	else
-	  src = gen_rtx_REG (<GPR:MODE>mode, REGNO (operands[1]));
-
-	if (boff != 0)
-	  {
-	    /* Upper halfword: one logical right shift zero-extends.  */
-	    emit_insn (gen_rtx_SET (operands[0],
-				    gen_rtx_LSHIFTRT (<GPR:MODE>mode,
-						      src, GEN_INT (16))));
-	  }
-	else if (TARGET_SHIFT)
-	  {
-	    rtx sh = GEN_INT (GET_MODE_BITSIZE (<GPR:MODE>mode) - 16);
-	    emit_insn (gen_rtx_SET (operands[0],
-				    gen_rtx_ASHIFT (<GPR:MODE>mode, src, sh)));
-	    emit_insn (gen_rtx_SET (operands[0],
-				    gen_rtx_LSHIFTRT (<GPR:MODE>mode,
-						      operands[0], sh)));
-	  }
-	else if (!TARGET_LUI)
-	  {
-	    /* sc0: post-reload, can't create pseudos or pool entries.
-	       riscv_emit_const_no_lui writes only into operands[0].  */
-	    riscv_emit_const_no_lui (<GPR:MODE>mode, operands[0], 0xFFFF);
-	    emit_insn (gen_and<GPR:mode>3 (operands[0], src, operands[0]));
-	  }
-	else
-	  {
-	    /* !TARGET_SHIFT (sc1): load mask into output then AND.
-	       =&r guarantees operands[0] != the underlying source reg.  */
-	    emit_move_insn (operands[0], GEN_INT (0xFFFF));
-	    emit_insn (gen_and<GPR:mode>3 (operands[0], src, operands[0]));
-	  }
+	/* !TARGET_SHIFT (sc1): load mask into output then AND.
+	   =&r guarantees operands[0] != the underlying source reg.  */
+	emit_move_insn (operands[0], GEN_INT (0xFFFF));
+	emit_insn (gen_and<GPR:mode>3 (operands[0], src, operands[0]));
       }
     DONE;
   }
   [(set_attr "move_type" "shift_shift,load")
+   (set_attr "type" "load")
+   (set_attr "mode" "<GPR:MODE>")])
+
+;; sc1: !TARGET_HALF counterpart of the pattern above.  Operand 1 is
+;; deliberately restricted to register_operand (no "m" alternative at
+;; all): the movhi expand above already intercepts every genuine
+;; source-level MEM operand at expand time, synthesizing the lw+shift+
+;; mask sequence itself with fresh pseudos while they're still legal to
+;; create.  A memory alternative here would instead be reachable only as
+;; an LRA spill escape valve -- and LRA's alternative costing picks a
+;; constraint-string-compatible memory alternative without re-checking
+;; this insn's overall C condition, producing a (zero_extend (mem ...))
+;; under !TARGET_HALF that can never be split post-reload (see the
+;; *movhi_internal / pr108789.c mul() comment above movhi_internal_noload
+;; for the same bug class).  Omitting the alternative forces LRA to
+;; reload the HImode value into a register first, through
+;; movhi_internal_noload's already post-reload-safe "r,m" alternative,
+;; before this pattern ever sees it.
+(define_insn_and_split "*zero_extendhi<GPR:mode>2_noload"
+  [(set (match_operand:GPR    0 "register_operand"     "=&r")
+	(zero_extend:GPR
+	    (match_operand:HI 1 "register_operand"     "   r")))]
+  "!TARGET_ZBB && !TARGET_XTHEADBB && !TARGET_XTHEADMEMIDX
+   && !TARGET_XANDESPERF && !TARGET_HALF"
+  "#"
+  "&& reload_completed && !paradoxical_subreg_p (operands[0])"
+  [(const_int 0)]
+  {
+    /* Same synthesis as the TARGET_HALF pattern's non-MEM split above;
+       see its comment for the boff/TARGET_SHIFT/TARGET_LUI rationale.  */
+    rtx src;
+    unsigned HOST_WIDE_INT boff = 0;
+    if (SUBREG_P (operands[1]))
+      {
+	boff = SUBREG_BYTE (operands[1]).to_constant ();
+	src = gen_rtx_REG (<GPR:MODE>mode,
+			   REGNO (SUBREG_REG (operands[1])));
+      }
+    else
+      src = gen_rtx_REG (<GPR:MODE>mode, REGNO (operands[1]));
+
+    if (boff != 0)
+      {
+	emit_insn (gen_rtx_SET (operands[0],
+				gen_rtx_LSHIFTRT (<GPR:MODE>mode,
+						  src, GEN_INT (16))));
+      }
+    else if (TARGET_SHIFT)
+      {
+	rtx sh = GEN_INT (GET_MODE_BITSIZE (<GPR:MODE>mode) - 16);
+	emit_insn (gen_rtx_SET (operands[0],
+				gen_rtx_ASHIFT (<GPR:MODE>mode, src, sh)));
+	emit_insn (gen_rtx_SET (operands[0],
+				gen_rtx_LSHIFTRT (<GPR:MODE>mode,
+						  operands[0], sh)));
+      }
+    else if (!TARGET_LUI)
+      {
+	riscv_emit_const_no_lui (<GPR:MODE>mode, operands[0], 0xFFFF);
+	emit_insn (gen_and<GPR:mode>3 (operands[0], src, operands[0]));
+      }
+    else
+      {
+	emit_move_insn (operands[0], GEN_INT (0xFFFF));
+	emit_insn (gen_and<GPR:mode>3 (operands[0], src, operands[0]));
+      }
+    DONE;
+  }
+  [(set_attr "move_type" "shift_shift")
    (set_attr "type" "load")
    (set_attr "mode" "<GPR:MODE>")])
 
@@ -3238,6 +3275,41 @@
   [(set_attr "type" "arith")
    (set_attr "mode" "HI")])
 
+;; Named entry point for the "xorhi3" optab. GCC's bit-field lowering
+;; (expmed.cc) can emit a bare (set (reg:HI) (xor:HI reg imm)) directly
+;; during expand -- long before combine ever runs -- when a compound
+;; assignment (e.g. "b.field ^= imm") lands entirely within a HImode
+;; storage unit (this is the same "safe narrow-mode RMW" trick that
+;; produces the analogous *add<mode>hi3 insn above). That bare shape has
+;; no clobbers, so it can only ever match a plain 2-operand insn --
+;; *xorhi3_noxor below (whose match_scratch clobbers only combine can add
+;; post-hoc) can never recognize it. Intercept here and lower directly via
+;; SImode synthesis using ordinary pseudo registers, which is safe this
+;; early (pre-reload, pre-combine). When TARGET_XOR, FAIL so the generic
+;; expand_binop fallback builds the same raw insn as before, which the
+;; native *xor<mode>hi3 pattern below matches unchanged.
+(define_expand "xorhi3"
+  [(set (match_operand:HI 0 "register_operand")
+        (xor:HI (match_operand:HI 1 "register_operand")
+                (match_operand:HI 2 "arith_operand")))]
+  ""
+{
+  if (TARGET_XOR)
+    FAIL;
+
+  rtx op1 = gen_lowpart (SImode, operands[1]);
+  rtx op2 = CONST_INT_P (operands[2])
+	    ? gen_int_mode (INTVAL (operands[2]), SImode)
+	    : gen_lowpart (SImode, operands[2]);
+  rtx ab_and = gen_reg_rtx (SImode);
+  rtx result = gen_reg_rtx (SImode);
+  emit_insn (gen_andsi3 (ab_and, op1, op2));
+  emit_insn (gen_iorsi3 (result, op1, op2));
+  emit_insn (gen_subsi3 (result, result, ab_and));
+  emit_move_insn (operands[0], gen_lowpart (HImode, result));
+  DONE;
+})
+
 (define_insn "*xor<mode>hi3"
   [(set (match_operand:HI 0 "register_operand"           "=r,r")
 	(xor:HI (match_operand:HISI 1 "register_operand" " r,r")
@@ -3247,29 +3319,104 @@
   [(set_attr "type" "logical")
    (set_attr "mode" "HI")])
 
-;; HImode XOR synthesis when !TARGET_XOR: force operand2 to a register
-;; and apply the identity a XOR b = a + b - 2*(a&b).
-(define_insn_and_split "*xorhi3_noxor"
+;; expmed.cc's "safe narrow-mode RMW" bitfield-lowering optimization
+;; constructs a bare (set (reg:HI) (xor:HI reg imm)) directly during EXPAND,
+;; without ever consulting the "xorhi3" named expand above (confirmed: that
+;; expand's synthesis body is simply never reached for this path) and with
+;; no clobbers attached. recog_memoized can only match an insn's pattern
+;; against an EXACT rtx shape -- it never adds missing clobbers on its own
+;; (only combine's recog_for_combine does that, via its own explicit
+;; add_clobbers step) -- so a clobber-requiring pattern like *xorhi3_noxor
+;; below can never match this bare insn.
+;;
+;; Since this pattern carries no clobbers, RTL dump forensics (grepping
+;; -fdump-rtl-all for a failing case) showed it can survive UNSPLIT all the
+;; way through combine, split1, ira and reload, only actually splitting at
+;; split2 (post-reload) -- so, unlike the comment that used to be here, the
+;; split body must NOT call gen_reg_rtx/force_reg (illegal post-reload).
+;; Instead it uses the same zero-scratch, in-place technique as *xorsi3_noxor
+;; below: a XOR b = a + b - 2*(a&b), computed entirely within operand 0
+;; (constrained "=&r" so it's guaranteed distinct from operands 1/2) while
+;; operand 1 is read but never written. For a CONST_INT operand 2, the
+;; immediate is first materialized into operand 0 via a plain move (always
+;; legal, no new pseudo), then AND is performed register-register (always
+;; native, unlike AND-with-immediate/ANDI which is gated by TARGET_ANDI and
+;; whose own synthesis would need a fresh pseudo) -- the final ADD then
+;; references the immediate rtx directly, since native ADDI always accepts
+;; an immediate operand.
+(define_insn_and_split "*xorhi3_noxor_bare"
   [(set (match_operand:HI 0 "register_operand" "=&r")
         (xor:HI (match_operand:HISI 1 "register_operand" "r")
                 (match_operand:HISI 2 "arith_operand" "rI")))]
   "!TARGET_XOR && !TARGET_64BIT"
   "#"
-  "!TARGET_XOR && !TARGET_64BIT && can_create_pseudo_p ()"
+  "!TARGET_XOR && !TARGET_64BIT"
   [(const_int 0)]
 {
-  /* a ^ b = (a | b) - (a & b); see the SImode xor synthesis above for why
-     sub (not NOT) is used to keep a data edge into the final result.  */
-  rtx op1 = gen_lowpart (SImode, operands[1]);
-  rtx op2 = (CONST_INT_P (operands[2])
-	      ? force_reg (SImode, gen_int_mode (INTVAL (operands[2]), SImode))
-	      : gen_lowpart (SImode, operands[2]));
   rtx op0 = gen_lowpart (SImode, operands[0]);
-  rtx ab_and = gen_reg_rtx (SImode);
-  rtx ab_ior = gen_reg_rtx (SImode);
+  rtx op1 = gen_lowpart (SImode, operands[1]);
+  if (CONST_INT_P (operands[2]))
+    {
+      rtx imm = gen_int_mode (INTVAL (operands[2]), SImode);
+      emit_move_insn (op0, imm);
+      emit_insn (gen_andsi3 (op0, op1, op0));
+      emit_insn (gen_addsi3 (op0, op0, op0));
+      emit_insn (gen_subsi3 (op0, op1, op0));
+      emit_insn (gen_addsi3 (op0, op0, imm));
+    }
+  else
+    {
+      rtx op2 = gen_lowpart (SImode, operands[2]);
+      emit_insn (gen_andsi3 (op0, op1, op2));
+      emit_insn (gen_addsi3 (op0, op0, op0));
+      emit_insn (gen_subsi3 (op0, op1, op0));
+      emit_insn (gen_addsi3 (op0, op0, op2));
+    }
+  DONE;
+})
+
+;; HImode XOR synthesis when !TARGET_XOR: force operand2 to a register
+;; and apply the identity a XOR b = (a | b) - (a & b).
+;;
+;; Unlike *xorhi3_noxor_bare above, this variant carries its own
+;; match_scratch clobbers, so it exists to match instances where those
+;; clobbers HAVE already been attached -- namely when combine reconstructs
+;; this shape from a bitfield sequence and adds the clobbers itself via
+;; recog_for_combine, possibly after reload_completed. The split body must
+;; not call gen_reg_rtx or force_reg for that reason. The two match_scratch
+;; operands below get real hard registers allocated during this insn's own,
+;; original LRA pass (same technique as movhi_internal_noload above), so
+;; they are available no matter when the split fires: operand 3 holds
+;; operand 2's value if it is a CONST_INT (materialized via a plain move
+;; instead of force_reg), and operand 4 holds the AND intermediate. The
+;; final OR is computed directly into operand 0 (already =&r, so distinct
+;; from operands 1/2) instead of needing a third scratch, then the SUB
+;; overwrites it in place with the final result.
+(define_insn_and_split "*xorhi3_noxor"
+  [(set (match_operand:HI 0 "register_operand" "=&r")
+        (xor:HI (match_operand:HISI 1 "register_operand" "r")
+                (match_operand:HISI 2 "arith_operand" "rI")))
+   (clobber (match_scratch:SI 3 "=&r"))
+   (clobber (match_scratch:SI 4 "=&r"))]
+  "!TARGET_XOR && !TARGET_64BIT"
+  "#"
+  "!TARGET_XOR && !TARGET_64BIT"
+  [(const_int 0)]
+{
+  rtx op1 = gen_lowpart (SImode, operands[1]);
+  rtx op2;
+  if (CONST_INT_P (operands[2]))
+    {
+      emit_move_insn (operands[3], gen_int_mode (INTVAL (operands[2]), SImode));
+      op2 = operands[3];
+    }
+  else
+    op2 = gen_lowpart (SImode, operands[2]);
+  rtx op0 = gen_lowpart (SImode, operands[0]);
+  rtx ab_and = operands[4];
   emit_insn (gen_andsi3 (ab_and, op1, op2));
-  emit_insn (gen_iorsi3 (ab_ior, op1, op2));
-  emit_insn (gen_subsi3 (op0, ab_ior, ab_and));
+  emit_insn (gen_iorsi3 (op0, op1, op2));
+  emit_insn (gen_subsi3 (op0, op0, ab_and));
   DONE;
 })
 
@@ -4585,6 +4732,119 @@
   [(set_attr "type" "branch")
    (set_attr "mode" "none")])
 
+;; Combine (and other late passes, e.g. loop exit-test rewriting into a
+;; count-down-to-zero sign test) can create a raw ordered-comparison branch
+;; on their own -- without ever going through @cbranch<mode>4's expand-time
+;; synthesis below. When !TARGET_SLT that shape can't match *branch<mode>
+;; above (whose condition excludes every code but EQ/NE unless TARGET_SLT),
+;; so it would otherwise be left unrecognizable. Catch it here.
+;;
+;; Empirically (see gcc.c-torture/execute failures this was written to fix)
+;; this shape first appears as late as split2, i.e. *after* reload -- so
+;; unlike @cbranch<mode>4's expand-time synthesis, this split cannot use
+;; gen_reg_rtx (it would hit the can_create_pseudo_p assert in gen_reg_rtx).
+;; It must instead route every temporary through match_scratch operands,
+;; which reload allocates real hard registers for regardless of whether the
+;; split fires pre- or post-reload. That in turn means it cannot call
+;; riscv_emit_slt_synth/riscv_expand_conditional_branch directly, since
+;; those go through gen_xorsi3/gen_one_cmplsi2/gen_lshrsi3 -- all of which
+;; are synthesized via gen_reg_rtx of their own when !TARGET_XOR/!TARGET_SHIFT
+;; (always the case here, since !TARGET_SLT implies both on every target
+;; that reaches this pattern). So the same sub/xor/and comparison synthesis
+;; is inlined here using explicit scratch registers (via
+;; riscv_emit_xor_scratch/riscv_emit_not_scratch for the xor/not steps), and
+;; the final "isolate the sign bit" step uses a mask-and (native, via a
+;; single lui) instead of a right-shift by 31 (which would need the
+;; !TARGET_SHIFT loop synthesis).
+(define_insn_and_split "*branch<mode>_slt_synth"
+  [(set (pc)
+	(if_then_else
+	 (match_operator 1 "ordered_comparison_operator"
+			 [(match_operand:X 2 "register_operand")
+			  (match_operand:X 3 "reg_or_0_operand")])
+	 (label_ref (match_operand 0 "" ""))
+	 (pc)))
+   (clobber (match_scratch:X 4 "=&r"))
+   (clobber (match_scratch:X 5 "=&r"))
+   (clobber (match_scratch:X 6 "=&r"))
+   (clobber (match_scratch:X 7 "=&r"))
+   (clobber (match_scratch:X 8 "=&r"))
+   (clobber (match_scratch:X 9 "=&r"))
+   (clobber (match_scratch:X 10 "=&r"))]
+  "!TARGET_XCVBI && !TARGET_SLT
+   && GET_CODE (operands[1]) != EQ && GET_CODE (operands[1]) != NE"
+  "#"
+  "&& reload_completed"
+  [(const_int 0)]
+{
+  rtx op0 = operands[2];
+  rtx op1 = operands[3];
+  enum rtx_code code = GET_CODE (operands[1]);
+  bool use_eq = false;
+
+  switch (code)
+    {
+    case GT:  std::swap (op0, op1); code = LT;  break;
+    case GTU: std::swap (op0, op1); code = LTU; break;
+    case GE:  use_eq = true;        code = LT;  break;
+    case GEU: use_eq = true;        code = LTU; break;
+    case LE:  std::swap (op0, op1); use_eq = true; code = LT;  break;
+    case LEU: std::swap (op0, op1); use_eq = true; code = LTU; break;
+    default:  break;
+    }
+
+  /* Either operand may be the literal 0 (reg_or_0_operand); the swaps
+     above can move it into either position.  gen_subsi3's second operand
+     and gen_andsi3's first operand both require a real register (not a
+     const_int 0), so materialize x0 explicitly rather than relying on
+     const0_rtx being accepted everywhere.  */
+  if (op0 == CONST0_RTX (<MODE>mode))
+    op0 = gen_rtx_REG (<MODE>mode, GP_REG_FIRST);
+  if (op1 == CONST0_RTX (<MODE>mode))
+    op1 = gen_rtx_REG (<MODE>mode, GP_REG_FIRST);
+
+  rtx diff = operands[4];
+  rtx t1   = operands[5];
+  rtx t2   = operands[6];
+  rtx xa   = operands[7];
+  rtx xb   = operands[8];
+  rtx result;
+
+  emit_insn (gen_subsi3 (diff, op0, op1));
+
+  if (code == LT)
+    {
+      /* result = ((a - b) corrected for signed overflow).
+	 overflow = (a^b) & (a^diff); corrected = diff ^ overflow.  */
+      riscv_emit_xor_scratch (t1, op0, op1, xa, xb);
+      riscv_emit_xor_scratch (t2, op0, diff, xa, xb);
+      emit_insn (gen_andsi3 (t1, t1, t2));
+      riscv_emit_xor_scratch (diff, diff, t1, xa, xb);
+      result = diff;
+    }
+  else
+    {
+      /* result = borrow.  borrow = (~a & b) | (~(a^b) & diff).  */
+      rtx t3 = operands[9];
+      riscv_emit_not_scratch (t1, op0);
+      emit_insn (gen_andsi3 (t2, t1, op1));
+      riscv_emit_xor_scratch (t3, op0, op1, xa, xb);
+      riscv_emit_not_scratch (t3, t3);
+      emit_insn (gen_andsi3 (t3, t3, diff));
+      emit_insn (gen_iorsi3 (t2, t2, t3));
+      result = t2;
+    }
+
+  rtx mask = operands[10];
+  riscv_emit_move (mask, gen_int_mode (0x80000000, <MODE>mode));
+  emit_insn (gen_andsi3 (result, result, mask));
+
+  rtx cond = gen_rtx_fmt_ee (use_eq ? EQ : NE, VOIDmode, result, const0_rtx);
+  emit_jump_insn (gen_condjump (cond, operands[0]));
+  DONE;
+}
+[(set_attr "type" "branch")])
+
 ;; Conditional move and add patterns.
 
 (define_expand "mov<mode>cc"
@@ -4773,6 +5033,17 @@
 				    (const_int 12)
 				    (const_int 16))))])
 
+;; This pattern's split (below) converts the single-bit test into an
+;; ordered (LT/GE-vs-0) sign test after shifting the tested bit into the
+;; sign position -- the other 31 bits of the shifted value are garbage, so
+;; unlike *branch_on_bit_range<X:mode> below it cannot stay an EQ/NE test.
+;; That ordered comparison needs !TARGET_SLT's synthesis, but this split
+;; fires "&& reload_completed" (post-reload) and emits the branch as a bare
+;; if_then_else with no clobbers, which *branch<mode>_slt_synth's clobbered
+;; shape can't match. Rather than duplicating that synthesis here, disable
+;; this fast path entirely when !TARGET_SLT: combine then leaves the
+;; bit-test as an ordinary AND-with-mask compared with EQ/NE, which
+;; *branch<mode> already accepts unconditionally (see its comment above).
 (define_insn_and_split "*branch_on_bit<X:mode>"
   [(set (pc)
 	(if_then_else
@@ -4784,7 +5055,7 @@
 	    (label_ref (match_operand 1))
 	    (pc)))
    (clobber (match_scratch:X 4 "=&r"))]
-   "!TARGET_XANDESPERF"
+   "!TARGET_XANDESPERF && TARGET_SLT"
    "#"
    "&& reload_completed"
   [(set (match_dup 4)
