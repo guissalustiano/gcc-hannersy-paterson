@@ -24,11 +24,18 @@ along with GCC; see the file COPYING3.  If not see
 /* sc0 is the 8-instruction single-cycle processor from Chapter 4.4 of
    Hennessy & Patterson.  It lacks lui and jalr (added by sc1), so function
    calls are impossible; only single-function programs compile correctly.
-   -mno-lui routes large constants through a constant pool accessed via
-   lw rd, %lo(pool)(x0); the rvsc0 linker script guarantees pool < 2048.
-   -mno-auipc redirects PC-relative addressing to absolute lui+lo12, but
-   since lui itself is disabled the effect is that symbol references also
-   go through the pool.  */
+   -mno-lui synthesizes large integer constants with addi/add only (split
+   the 20-bit lui immediate into two 10-bit halves, build with shifts) --
+   no memory access, so correctness does not depend on where the program
+   is loaded.  An earlier version of this target routed such constants
+   through a linker-placed constant pool addressed as lw rd,%lo(pool)(x0),
+   which is only correct if the pool links below address 2048; that does
+   not hold in general (nor for this project's own Spike behavioral tests,
+   which load at 0x80000000), so it was replaced by the addi/add synthesis.
+   Symbol references (e.g. addresses of global variables) still require
+   lui and remain unsupported: their addresses are link-time-unknown and
+   RISC-V relocations only support the standard 20-bit/12-bit lui/addi
+   split, not this target's custom 10/10-bit split.  */
 #undef CC1_SPEC
 #define CC1_SPEC \
   "%{!mfence:-mno-fence} %{!mauipc:-mno-auipc} %{!mshift:-mno-shift}" \

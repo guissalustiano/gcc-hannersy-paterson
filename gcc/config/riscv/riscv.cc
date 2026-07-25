@@ -2065,12 +2065,10 @@ riscv_float_const_rtx_index_for_fli (rtx x)
 static bool
 riscv_legitimate_constant_p (machine_mode mode ATTRIBUTE_UNUSED, rtx x)
 {
-  /* !TARGET_LUI (rvsc0): any constant that can't be expressed as addi
-     (i.e. outside the 12-bit signed range) requires lui or a multi-step
-     sequence that includes lui.  Force all such constants into the pool so
-     they are loaded via lw rd, %lo(pool)(x0) instead.  */
-  if (!TARGET_LUI && CONST_INT_P (x) && !SMALL_OPERAND (INTVAL (x)))
-    return false;
+  /* !TARGET_LUI (rvsc0): large CONST_INTs no longer need lui or a memory
+     access -- riscv_legitimize_const_move synthesizes them in place via
+     riscv_synthesize_const_no_lui -- so fall through exactly as TARGET_LUI
+     targets do.  */
 
   /* With the post-reload usage, it seems best to just pass in FALSE
      rather than pass ALLOW_NEW_PSEUDOS through the call chain.  */
@@ -2087,10 +2085,16 @@ riscv_cannot_force_const_mem (machine_mode mode ATTRIBUTE_UNUSED, rtx x)
   enum riscv_symbol_type type;
   rtx base, offset;
 
-  /* !TARGET_LUI (rvsc0): any constant outside 12-bit signed range must go
-     to the pool (same condition as riscv_legitimate_constant_p above).  */
+  /* !TARGET_LUI (rvsc0): these constants are now synthesized in place by
+     riscv_synthesize_const_no_lui; never let them be pooled -- both
+     because it is unnecessary and because %lo(pool)(x0) addressing
+     (riscv_split_symbol's SYMBOL_ABSOLUTE case) is only valid when the
+     pool links below address 2048, which does not hold in general (nothing
+     guarantees a program executes starting at address 0) and does not hold
+     for this project's own behavioral-test harness (tests/sc0/link32.ld
+     places .rodata at 0x80000000).  */
   if (!TARGET_LUI && CONST_INT_P (x) && !SMALL_OPERAND (INTVAL (x)))
-    return false;
+    return true;
 
   /* There's no way to calculate VL-based values using relocations.  */
   subrtx_iterator::array_type array;
@@ -3030,11 +3034,17 @@ riscv_split_symbol (rtx temp, rtx addr, machine_mode mode, rtx *low_out)
 
       case SYMBOL_ABSOLUTE:
 	{
+	  /* !TARGET_LUI (rvsc0): CONST_INT constants are synthesized in
+	     place (see riscv_synthesize_const_no_lui /
+	     riscv_cannot_force_const_mem above) and never pooled, so this
+	     %lo(pool)(x0) case is unreachable for them.  It can still be
+	     reached for other constant kinds this target doesn't otherwise
+	     restrict (e.g. vector constants, exercised by GCC's own
+	     riscv-selftests.cc); left as upstream behavior for those, with
+	     the same caveat as before: it is only correct if the pool links
+	     below address 2048, which is not guaranteed in general.  */
 	  if (!TARGET_LUI && CONSTANT_POOL_ADDRESS_P (addr))
 	    {
-	      /* rvsc0 constant pool: pool entries are placed at address < 2048
-		 by the linker script, so %hi(pool_sym) == 0 after linking.
-		 Use x0 as base: lw rd, %lo(pool_sym)(x0).  */
 	      *low_out = gen_rtx_LO_SUM (Pmode, gen_rtx_REG (Pmode, 0), addr);
 	      break;
 	    }
@@ -3352,6 +3362,61 @@ riscv_emit_const_no_lui (machine_mode mode, rtx dest, HOST_WIDE_INT val)
   return dest;
 }
 
+/* Synthesize an arbitrary constant VALUE into DEST using only addi/add
+   (no lui, no memory access), for !TARGET_LUI (rvsc0) targets.  Unlike
+   riscv_emit_const_no_lui above, VALUE need not be 2^N or 2^N - 1.
+
+   Uses only DEST as a scratch (no second register, so this is safe to
+   call both before and after reload, matching riscv_emit_const_no_lui):
+
+     low12 = CONST_LOW_PART (value)             -- fits ADDI
+     hi20  = (value - low12) >> IMM_BITS         -- what a native LUI
+                                                     immediate would hold
+
+   If hi20 itself fits ADDI, it is loaded directly.  Otherwise its low 20
+   bits are split into two unsigned 10-bit halves hi10 = hi20[19:10] and
+   lo10 = hi20[9:0] (each 0-1023, always fits ADDI), which never share a
+   bit position, so hi20 == (hi10 << 10) + lo10 with no carry -- built
+   with a single accumulator: load hi10, shift left 10, add lo10.  The
+   result is then shifted left by IMM_BITS and, if low12 != 0, low12 is
+   added.  Left shifts reuse the existing ASHIFT-by-CONST-N synthesis
+   (*ashlsi3_noshift / the ASHIFT branch of <optab>si3), which is itself
+   dest-only for the same reason.  */
+
+static void
+riscv_synthesize_const_no_lui (rtx dest, HOST_WIDE_INT value)
+{
+  machine_mode mode = GET_MODE (dest);
+  value = trunc_int_for_mode (value, mode);
+
+  if (SMALL_OPERAND (value))
+    {
+      riscv_emit_set (dest, GEN_INT (value));
+      return;
+    }
+
+  HOST_WIDE_INT low12 = CONST_LOW_PART (value);
+  HOST_WIDE_INT hi20 = (value - low12) >> IMM_BITS;
+
+  if (SMALL_OPERAND (hi20))
+    riscv_emit_set (dest, GEN_INT (hi20));
+  else
+    {
+      unsigned HOST_WIDE_INT u20 = (unsigned HOST_WIDE_INT) hi20 & 0xFFFFF;
+      HOST_WIDE_INT hi10 = (u20 >> 10) & 0x3FF;
+      HOST_WIDE_INT lo10 = u20 & 0x3FF;
+
+      riscv_emit_set (dest, GEN_INT (hi10));
+      riscv_emit_set (dest, gen_rtx_fmt_ee (ASHIFT, mode, dest, GEN_INT (10)));
+      riscv_emit_set (dest, gen_rtx_fmt_ee (PLUS, mode, dest, GEN_INT (lo10)));
+    }
+
+  riscv_emit_set (dest, gen_rtx_fmt_ee (ASHIFT, mode, dest, GEN_INT (IMM_BITS)));
+
+  if (low12 != 0)
+    riscv_emit_set (dest, gen_rtx_fmt_ee (PLUS, mode, dest, GEN_INT (low12)));
+}
+
 /* Load VALUE into DEST.  TEMP is as for riscv_force_temporary.  ORIG_MODE
    is the original src mode before promotion.  */
 
@@ -3364,6 +3429,16 @@ riscv_move_integer (rtx temp, rtx dest, HOST_WIDE_INT value)
   rtx x = NULL_RTX;
 
   mode = GET_MODE (dest);
+
+  /* !TARGET_LUI (rvsc0): riscv_build_integer below is unconditionally
+     lui-based and would emit an illegal lui for this target; synthesize
+     with addi/add instead.  TARGET_LUI targets are unaffected.  */
+  if (!TARGET_LUI)
+    {
+      riscv_synthesize_const_no_lui (dest, value);
+      return;
+    }
+
   /* This originally passed in a mode prior to promotions, but what we really
      need to do is pass in the mode of the destination, that's what ultimately
      determines how a constant needs to be canonicalized.  */

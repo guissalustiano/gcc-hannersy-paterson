@@ -430,7 +430,7 @@ Enable auipc instruction emission (-mno-auipc uses absolute lui+lo12 addressing 
 
 mlui
 Target Var(TARGET_LUI) Init(1)
-Enable lui instruction (-mno-lui synthesizes large constants via constant pool lw from x0).
+Enable lui instruction (-mno-lui synthesizes large constants via addi/add, no lui or memory access).
 
 mshift
 Target Var(TARGET_SHIFT) Init(1)

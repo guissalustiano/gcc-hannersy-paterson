@@ -251,6 +251,13 @@
   if (TARGET_ZBS && SINGLE_BIT_MASK_OPERAND (INTVAL (op)))
     return false;
 
+  /* !TARGET_LUI (rvsc0): there is no single-instruction lui, so every
+     constant that doesn't fit addi needs riscv_move_integer's addi/add
+     synthesis -- even ones that would be LUI_OPERAND on a target with a
+     native lui.  */
+  if (!TARGET_LUI)
+    return !SMALL_OPERAND (INTVAL (op));
+
   /* Otherwise check whether the constant can be loaded in a single
      instruction.  */
   return !LUI_OPERAND (INTVAL (op)) && !SMALL_OPERAND (INTVAL (op));
