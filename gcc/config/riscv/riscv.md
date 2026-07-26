@@ -4018,6 +4018,66 @@
 }
   [(set_attr "type" "arith")])
 
+;; LSHIFTRT-by-constant synthesis — 3 scratch registers (no runtime loop
+;; counter needed since the shift amount is known at split time).  Matching
+;; a const_int operand 2 also lets this pattern double as the combine-
+;; reconstruction safety net (see *ashlsi3_noshift above) for LSHIFTRT.
+(define_insn_and_split "lshrsi3_sc1_const"
+  [(set (match_operand:SI 0 "register_operand" "=&yr")
+        (lshiftrt:SI (match_operand:SI 1 "register_operand"  "r")
+                     (match_operand    2 "const_int_operand")))
+   (clobber (match_scratch:SI 3 "=&yr"))
+   (clobber (match_scratch:SI 4 "=&yr"))
+   (clobber (match_scratch:SI 5 "=&yr"))]
+  "!TARGET_SHIFT"
+  "#"
+  "reload_completed"
+  [(const_int 0)]
+{
+  rtx rs1 = operands[1];
+  HOST_WIDE_INT shamt = INTVAL (operands[2]) & 31;
+
+  if (shamt == 0)
+    {
+      emit_move_insn (operands[0], rs1);
+      DONE;
+    }
+
+  rtx out_mask = operands[3];
+  rtx in_mask  = operands[4];
+  rtx tmp      = operands[5];
+
+  emit_move_insn (operands[0], const0_rtx);
+  emit_move_insn (out_mask,    const1_rtx);
+
+  /* in_mask = 1 << shamt, unrolled at split time. */
+  emit_move_insn (in_mask, const1_rtx);
+  for (HOST_WIDE_INT i = 0; i < shamt; i++)
+    emit_insn (gen_addsi3 (in_mask, in_mask, in_mask));
+
+  /* Bit-by-bit extraction for the remaining (32 - shamt) output bits.
+     The per-bit test is data-dependent and still needs a forward
+     conditional branch; only the loop CONTROL is eliminated. */
+  for (HOST_WIDE_INT i = shamt; i < 32; i++)
+    {
+      rtx skip_label = gen_label_rtx ();
+      emit_insn (gen_andsi3 (tmp, rs1, in_mask));
+      emit_cmp_and_jump_insns (tmp, const0_rtx, EQ, NULL_RTX,
+                                SImode, 0, skip_label,
+                                profile_probability::uninitialized ());
+      emit_insn (gen_iorsi3 (operands[0], operands[0], out_mask));
+      emit_label (skip_label);
+      if (i != 31)
+        {
+          emit_insn (gen_addsi3 (out_mask, out_mask, out_mask));
+          emit_insn (gen_addsi3 (in_mask,  in_mask,  in_mask));
+        }
+    }
+
+  DONE;
+}
+  [(set_attr "type" "arith")])
+
 ;; ASHIFTRT synthesis — 8 scratch registers.
 (define_insn_and_split "ashrsi3_sc1"
   [(set (match_operand:SI 0 "register_operand" "=&yr")
@@ -4140,6 +4200,97 @@
 }
   [(set_attr "type" "arith")])
 
+;; ASHIFTRT-by-constant synthesis — 5 scratch registers (out_mask, in_mask,
+;; tmp, sign_bit, sign_mask; no shift_masked/counter2/n_sll2 needed since
+;; shamt is resolved at split time).  Also serves as the combine-
+;; reconstruction safety net for ASHIFTRT.  Handles shamt==0 internally
+;; (moved out of the dispatching expand, for symmetry with
+;; lshrsi3_sc1_const).
+(define_insn_and_split "ashrsi3_sc1_const"
+  [(set (match_operand:SI 0 "register_operand" "=&yr")
+        (ashiftrt:SI (match_operand:SI 1 "register_operand"  "r")
+                     (match_operand    2 "const_int_operand")))
+   (clobber (match_scratch:SI 3 "=&yr"))
+   (clobber (match_scratch:SI 4 "=&yr"))
+   (clobber (match_scratch:SI 5 "=&yr"))
+   (clobber (match_scratch:SI 6 "=&yr"))
+   (clobber (match_scratch:SI 7 "=&yr"))]
+  "!TARGET_SHIFT"
+  "#"
+  "reload_completed"
+  [(const_int 0)]
+{
+  rtx rs1 = operands[1];
+  HOST_WIDE_INT shamt = INTVAL (operands[2]) & 31;
+
+  if (shamt == 0)
+    {
+      emit_move_insn (operands[0], rs1);
+      DONE;
+    }
+
+  rtx out_mask  = operands[3];
+  rtx in_mask   = operands[4];
+  rtx tmp       = operands[5];
+  rtx sign_bit  = operands[6];
+  rtx sign_mask = operands[7];
+
+  /* Save sign bit (use li+and to avoid ANDI with a large immediate). */
+  if (!TARGET_LUI)
+    {
+      /* sc0: lui unavailable and pool forbidden post-reload.
+	 riscv_emit_const_no_lui writes only into sign_bit.  */
+      riscv_emit_const_no_lui (SImode, sign_bit, HOST_WIDE_INT_1 << 31);
+      emit_insn (gen_andsi3 (sign_bit, rs1, sign_bit));
+    }
+  else
+    {
+      emit_move_insn (sign_bit, gen_int_mode (0x80000000UL, SImode));
+      emit_insn (gen_andsi3 (sign_bit, rs1, sign_bit));
+    }
+
+  /* Inline SRL synthesis, unrolled at split time. */
+  emit_move_insn (operands[0], const0_rtx);
+  emit_move_insn (out_mask,    const1_rtx);
+
+  emit_move_insn (in_mask, const1_rtx);
+  for (HOST_WIDE_INT i = 0; i < shamt; i++)
+    emit_insn (gen_addsi3 (in_mask, in_mask, in_mask));
+
+  for (HOST_WIDE_INT i = shamt; i < 32; i++)
+    {
+      rtx skip_label = gen_label_rtx ();
+      emit_insn (gen_andsi3 (tmp, rs1, in_mask));
+      emit_cmp_and_jump_insns (tmp, const0_rtx, EQ, NULL_RTX,
+                                SImode, 0, skip_label,
+                                profile_probability::uninitialized ());
+      emit_insn (gen_iorsi3 (operands[0], operands[0], out_mask));
+      emit_label (skip_label);
+      if (i != 31)
+        {
+          emit_insn (gen_addsi3 (out_mask, out_mask, out_mask));
+          emit_insn (gen_addsi3 (in_mask,  in_mask,  in_mask));
+        }
+    }
+
+  /* If rs1 was non-negative, srl == sra: done.  (shamt != 0 here, handled
+     above, so if rs1 is negative there are sign-extension bits to fill.)  */
+  rtx done_label = gen_label_rtx ();
+  emit_cmp_and_jump_insns (sign_bit, const0_rtx, EQ, NULL_RTX,
+                            SImode, 0, done_label,
+                            profile_probability::uninitialized ());
+
+  /* sign_mask = 0xFFFFFFFF << (32 - shamt), unrolled at split time. */
+  emit_move_insn (sign_mask, constm1_rtx);
+  for (HOST_WIDE_INT i = 0; i < 32 - shamt; i++)
+    emit_insn (gen_addsi3 (sign_mask, sign_mask, sign_mask));
+  emit_insn (gen_iorsi3 (operands[0], operands[0], sign_mask));
+
+  emit_label (done_label);
+  DONE;
+}
+  [(set_attr "type" "arith")])
+
 ;; Variable ASHIFT synthesis — 1 scratch register for the countdown.
 (define_insn_and_split "ashlsi3_sc1_var"
   [(set (match_operand:SI 0 "register_operand" "=&yr")
@@ -4218,20 +4369,29 @@
       emit_insn (gen_ashlsi3_sc1_var (operands[0], operands[1], cnt));
       DONE;
     }
-  /* sc1 synthesis: srl via post-reload split (lshrsi3_sc1). */
+  /* sc1 synthesis: constant srl unrolled at split time (lshrsi3_sc1_const);
+     variable srl via runtime-loop post-reload split (lshrsi3_sc1). */
   if ((<CODE>) == LSHIFTRT && !TARGET_SHIFT)
     {
+      if (CONST_INT_P (operands[2]))
+	{
+	  emit_insn (gen_lshrsi3_sc1_const (operands[0], operands[1],
+					     operands[2]));
+	  DONE;
+	}
       rtx cnt = force_reg (SImode, gen_lowpart (SImode, operands[2]));
       emit_insn (gen_lshrsi3_sc1 (operands[0], operands[1], cnt));
       DONE;
     }
-  /* sc1 synthesis: sra via post-reload split (ashrsi3_sc1). */
+  /* sc1 synthesis: constant sra unrolled at split time (ashrsi3_sc1_const,
+     which also handles the shamt==0 identity case); variable sra via
+     runtime-loop post-reload split (ashrsi3_sc1). */
   if ((<CODE>) == ASHIFTRT && !TARGET_SHIFT)
     {
-      /* Shift by 0 is identity; handle before emitting the synthesis insn. */
-      if (CONST_INT_P (operands[2]) && (INTVAL (operands[2]) & 31) == 0)
+      if (CONST_INT_P (operands[2]))
 	{
-	  emit_move_insn (operands[0], operands[1]);
+	  emit_insn (gen_ashrsi3_sc1_const (operands[0], operands[1],
+					     operands[2]));
 	  DONE;
 	}
       rtx cnt = force_reg (SImode, gen_lowpart (SImode, operands[2]));
