@@ -4952,8 +4952,8 @@
   [(set (pc)
 	(if_then_else
 	 (match_operator 1 "ordered_comparison_operator"
-			 [(match_operand:X 2 "register_operand")
-			  (match_operand:X 3 "reg_or_0_operand")])
+			 [(match_operand:X 2 "register_operand" "r")
+			  (match_operand:X 3 "reg_or_0_operand" "rJ")])
 	 (label_ref (match_operand 0 "" ""))
 	 (pc)))
    (clobber (match_scratch:X 4 "=&r"))
