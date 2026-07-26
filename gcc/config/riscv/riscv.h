@@ -551,6 +551,7 @@ enum reg_class
   SIBCALL_REGS,			/* registers used by indirect sibcalls */
   RVC_GR_REGS,			/* RVC general registers */
   JALR_REGS,			/* registers used by indirect calls */
+  NOTRAMP_REGS,			/* integer registers except ra, t0, t1 */
   NORA_REGS,			/* integer registers except ra */
   GR_REGS,			/* integer registers */
   RVC_FP_REGS,			/* RVC floating-point registers */
@@ -577,6 +578,7 @@ enum reg_class
   "SIBCALL_REGS",							\
   "RVC_GR_REGS",							\
   "JALR_REGS",								\
+  "NOTRAMP_REGS",							\
   "NORA_REGS",								\
   "GR_REGS",								\
   "RVC_FP_REGS",							\
@@ -605,6 +607,7 @@ enum reg_class
   { 0xf003fcc0, 0x00000000, 0x00000000, 0x00000000 },	/* SIBCALL_REGS */	\
   { 0x0000ff00, 0x00000000, 0x00000000, 0x00000000 },	/* RVC_GR_REGS */	\
   { 0xffffffc0, 0x00000000, 0x00000000, 0x00000000 },	/* JALR_REGS */		\
+  { 0xffffff9d, 0x00000000, 0x00000000, 0x00000000 },	/* NOTRAMP_REGS */	\
   { 0xfffffffd, 0x00000000, 0x00000000, 0x00000000 },	/* NORA_REGS */		\
   { 0xffffffff, 0x00000000, 0x00000000, 0x00000000 },	/* GR_REGS */		\
   { 0x00000000, 0x0000ff00, 0x00000000, 0x00000000 },	/* RVC_FP_REGS */	\

@@ -3950,13 +3950,13 @@
 
 ;; LSHIFTRT synthesis — 4 scratch registers.
 (define_insn_and_split "lshrsi3_sc1"
-  [(set (match_operand:SI 0 "register_operand" "=&yr")
+  [(set (match_operand:SI 0 "register_operand" "=&yt")
         (lshiftrt:SI (match_operand:SI 1 "register_operand"  "r")
                      (match_operand:SI 2 "register_operand"  "r")))
-   (clobber (match_scratch:SI 3 "=&yr"))
-   (clobber (match_scratch:SI 4 "=&yr"))
-   (clobber (match_scratch:SI 5 "=&yr"))
-   (clobber (match_scratch:SI 6 "=&yr"))]
+   (clobber (match_scratch:SI 3 "=&yt"))
+   (clobber (match_scratch:SI 4 "=&yt"))
+   (clobber (match_scratch:SI 5 "=&yt"))
+   (clobber (match_scratch:SI 6 "=&yt"))]
   "!TARGET_SHIFT"
   "#"
   "reload_completed"
@@ -4023,12 +4023,12 @@
 ;; a const_int operand 2 also lets this pattern double as the combine-
 ;; reconstruction safety net (see *ashlsi3_noshift above) for LSHIFTRT.
 (define_insn_and_split "lshrsi3_sc1_const"
-  [(set (match_operand:SI 0 "register_operand" "=&yr")
+  [(set (match_operand:SI 0 "register_operand" "=&yt")
         (lshiftrt:SI (match_operand:SI 1 "register_operand"  "r")
                      (match_operand    2 "const_int_operand")))
-   (clobber (match_scratch:SI 3 "=&yr"))
-   (clobber (match_scratch:SI 4 "=&yr"))
-   (clobber (match_scratch:SI 5 "=&yr"))]
+   (clobber (match_scratch:SI 3 "=&yt"))
+   (clobber (match_scratch:SI 4 "=&yt"))
+   (clobber (match_scratch:SI 5 "=&yt"))]
   "!TARGET_SHIFT"
   "#"
   "reload_completed"
@@ -4080,17 +4080,17 @@
 
 ;; ASHIFTRT synthesis — 8 scratch registers.
 (define_insn_and_split "ashrsi3_sc1"
-  [(set (match_operand:SI 0 "register_operand" "=&yr")
+  [(set (match_operand:SI 0 "register_operand" "=&yt")
         (ashiftrt:SI (match_operand:SI 1 "register_operand"  "r")
                      (match_operand:SI 2 "register_operand"  "r")))
-   (clobber (match_scratch:SI 3  "=&yr"))
-   (clobber (match_scratch:SI 4  "=&yr"))
-   (clobber (match_scratch:SI 5  "=&yr"))
-   (clobber (match_scratch:SI 6  "=&yr"))
-   (clobber (match_scratch:SI 7  "=&yr"))
-   (clobber (match_scratch:SI 8  "=&yr"))
-   (clobber (match_scratch:SI 9  "=&yr"))
-   (clobber (match_scratch:SI 10 "=&yr"))]
+   (clobber (match_scratch:SI 3  "=&yt"))
+   (clobber (match_scratch:SI 4  "=&yt"))
+   (clobber (match_scratch:SI 5  "=&yt"))
+   (clobber (match_scratch:SI 6  "=&yt"))
+   (clobber (match_scratch:SI 7  "=&yt"))
+   (clobber (match_scratch:SI 8  "=&yt"))
+   (clobber (match_scratch:SI 9  "=&yt"))
+   (clobber (match_scratch:SI 10 "=&yt"))]
   "!TARGET_SHIFT"
   "#"
   "reload_completed"
@@ -4207,14 +4207,14 @@
 ;; (moved out of the dispatching expand, for symmetry with
 ;; lshrsi3_sc1_const).
 (define_insn_and_split "ashrsi3_sc1_const"
-  [(set (match_operand:SI 0 "register_operand" "=&yr")
+  [(set (match_operand:SI 0 "register_operand" "=&yt")
         (ashiftrt:SI (match_operand:SI 1 "register_operand"  "r")
                      (match_operand    2 "const_int_operand")))
-   (clobber (match_scratch:SI 3 "=&yr"))
-   (clobber (match_scratch:SI 4 "=&yr"))
-   (clobber (match_scratch:SI 5 "=&yr"))
-   (clobber (match_scratch:SI 6 "=&yr"))
-   (clobber (match_scratch:SI 7 "=&yr"))]
+   (clobber (match_scratch:SI 3 "=&yt"))
+   (clobber (match_scratch:SI 4 "=&yt"))
+   (clobber (match_scratch:SI 5 "=&yt"))
+   (clobber (match_scratch:SI 6 "=&yt"))
+   (clobber (match_scratch:SI 7 "=&yt"))]
   "!TARGET_SHIFT"
   "#"
   "reload_completed"
@@ -4293,10 +4293,10 @@
 
 ;; Variable ASHIFT synthesis — 1 scratch register for the countdown.
 (define_insn_and_split "ashlsi3_sc1_var"
-  [(set (match_operand:SI 0 "register_operand" "=&yr")
+  [(set (match_operand:SI 0 "register_operand" "=&yt")
         (ashift:SI (match_operand:SI 1 "register_operand"  "r")
                    (match_operand:SI 2 "register_operand"  "r")))
-   (clobber (match_scratch:SI 3 "=&yr"))]
+   (clobber (match_scratch:SI 3 "=&yt"))]
   "!TARGET_SHIFT"
   "#"
   "reload_completed"
@@ -4836,15 +4836,17 @@
       /* sc1 NE synthesis: reverse condition to skip over lui+addi+jr.
 	 Always 16 bytes; the short beq+beq_zero form is unsafe because GCC
 	 branch-shortening can converge at a size where beq zero,zero hits an
-	 assembler out-of-range expansion.  */
-      return "beq\t%2,%z3,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
+	 assembler out-of-range expansion.  Uses t0, not t1: see the "jump"
+	 pattern above for why these two scratch registers must stay disjoint
+	 from RISCV_CALL_ADDRESS_TEMP (t1).  */
+      return "beq\t%2,%z3,1f\n\tlui\tt0,%%hi(%l0)\n\taddi\tt0,t0,%%lo(%l0)\n\tjr\tt0\n1:";
     }
 
   /* Long-range EQ (length==20): beq to lui-block, then unconditional
      beq zero,zero to skip it, then lui+addi+jr.  Avoids assembler
      bne+jal expansion which uses instructions forbidden by sc1.  */
   if (get_attr_length (insn) == 20)
-    return "beq\t%2,%z3,1f\n\tbeq\tzero,zero,2f\n1:\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n2:";
+    return "beq\t%2,%z3,1f\n\tbeq\tzero,zero,2f\n1:\n\tlui\tt0,%%hi(%l0)\n\taddi\tt0,t0,%%lo(%l0)\n\tjr\tt0\n2:";
 
   /* When !TARGET_SLT, ordered comparisons never reach this insn: the
      condition above requires TARGET_SLT for any code other than EQ/NE, and
@@ -4857,7 +4859,7 @@
       if (!TARGET_SLT)
 	/* Unreachable: see @cbranch<mode>4 intercept above.  */
 	gcc_unreachable ();
-      return "slt\tt1,%2,%z3\n\tbeq\tt1,zero,%l0";
+      return "slt\tt0,%2,%z3\n\tbeq\tt0,zero,%l0";
     }
 
   if (!TARGET_BLT && GET_CODE (operands[1]) == LT)
@@ -4865,7 +4867,7 @@
       if (!TARGET_SLT)
 	/* Unreachable: see @cbranch<mode>4 intercept above.  */
 	gcc_unreachable ();
-      return "slt\tt1,%2,%z3\n\tbeq\tt1,zero,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
+      return "slt\tt0,%2,%z3\n\tbeq\tt0,zero,1f\n\tlui\tt0,%%hi(%l0)\n\taddi\tt0,t0,%%lo(%l0)\n\tjr\tt0\n1:";
     }
 
   if (!TARGET_BGEU && GET_CODE (operands[1]) == GEU)
@@ -4873,7 +4875,7 @@
       if (!TARGET_SLT)
 	/* Unreachable: see @cbranch<mode>4 intercept above.  */
 	gcc_unreachable ();
-      return "sltu\tt1,%2,%z3\n\tbeq\tt1,zero,%l0";
+      return "sltu\tt0,%2,%z3\n\tbeq\tt0,zero,%l0";
     }
 
   if (!TARGET_BLTU && GET_CODE (operands[1]) == LTU)
@@ -4881,7 +4883,7 @@
       if (!TARGET_SLT)
 	/* Unreachable: see @cbranch<mode>4 intercept above.  */
 	gcc_unreachable ();
-      return "sltu\tt1,%2,%z3\n\tbeq\tt1,zero,1f\n\tlui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1\n1:";
+      return "sltu\tt0,%2,%z3\n\tbeq\tt0,zero,1f\n\tlui\tt0,%%hi(%l0)\n\taddi\tt0,t0,%%lo(%l0)\n\tjr\tt0\n1:";
     }
 
   if (get_attr_length (insn) == 12)
@@ -5606,8 +5608,22 @@
   if (!TARGET_AUIPC)
     /* sc1: jal (PC-relative unconditional jump) is not available.
        Synthesise an absolute jump using lui+addi+jalr.
-       Like the existing "jump pseudo" long form, this clobbers t1.  */
-    return "lui\tt1,%%hi(%l0)\n\taddi\tt1,t1,%%lo(%l0)\n\tjr\tt1";
+       Uses t0, not t1: t1 (RISCV_CALL_ADDRESS_TEMP) is what
+       riscv_legitimize_call_address materialises call targets into as a
+       separate, independently-scheduled movsi ahead of a register-indirect
+       jalr. That movsi and this jump pattern are two separate RTL insns
+       with no declared dependency between them (this pattern's raw asm
+       clobbers t1 without GCC's dataflow knowing — see the "!TARGET_AUIPC"
+       jr\tt1 form this used to be), so nothing stops an optimizer from
+       treating a call's t1 reload as dead/redundant, or scheduling this
+       jump between it and the call, if they ever land nearby (confirmed via
+       pr50865.c and pr93249.c: a call fired with a stale t1 still pointing
+       at a nearby jump/branch's own target instead of the real callee).
+       Using t0 here instead keeps this pattern's scratch register disjoint
+       from the call-address register, so the two can never collide; t0 is
+       otherwise touched only during prologue/epilogue (RISCV_PROLOGUE_TEMP),
+       never live across a mid-function jump.  */
+    return "lui\tt0,%%hi(%l0)\n\taddi\tt0,t0,%%lo(%l0)\n\tjr\tt0";
 
   /* Use the long form (AUIPC+JALR) if the jump distance exceeds 1 MiB,
      or if the jump crosses section boundaries (e.g., from hot to cold

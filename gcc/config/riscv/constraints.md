@@ -43,6 +43,22 @@
 (define_register_constraint "yr" "NORA_REGS"
   "@internal")
 
+;; General purpose register except ra (x1), t0 (x5), t1 (x6).  Used for the
+;; rvsc1 post-reload shift syntheses' output and scratch registers: their
+;; split-out RTL emits a loop whose back edge is an ordinary "jump"/
+;; "*branch<mode>" insn.  For !TARGET_AUIPC those synthesise long jumps as
+;; raw "lui/addi/jr" asm text using t0 (and, for calls materialised via
+;; riscv_legitimize_call_address, t1) without declaring a clobber -- GCC's
+;; dataflow has no idea those registers are touched.  If IRA/reload ever
+;; picks t0 or t1 for one of these loops' own live-across-the-back-edge
+;; values (its accumulator or counter), the loop's own back edge silently
+;; destroys it.  Confirmed via pr93249.c at -O3: after inlining moved a
+;; byte-store alignment shift loop next to a real call, its loop counter
+;; got allocated to t0 -- exactly the register its own back-edge jump was
+;; (secretly) clobbering -- so the loop never terminated.
+(define_register_constraint "yt" "NOTRAMP_REGS"
+  "@internal")
+
 (define_register_constraint "cr" "RVC_GR_REGS"
   "RVC general purpose register (x8-x15).")
 
