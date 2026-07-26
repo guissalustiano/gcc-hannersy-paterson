@@ -3956,7 +3956,21 @@
    (clobber (match_scratch:SI 3 "=&yt"))
    (clobber (match_scratch:SI 4 "=&yt"))
    (clobber (match_scratch:SI 5 "=&yt"))
-   (clobber (match_scratch:SI 6 "=&yt"))]
+   (clobber (match_scratch:SI 6 "=&yt"))
+   ;; t0/t1 clobber: the split below (reload_completed) emits a loop whose
+   ;; back edge is a "jump"/"*branch<mode>" insn, which for !TARGET_AUIPC
+   ;; secretly destroys t0 (and, via an adjacent call's own address reload,
+   ;; can expose t1) as raw asm text IRA never sees. The "yt" constraints
+   ;; above only keep THIS pattern's own operands off t0/t1; they say
+   ;; nothing about some UNRELATED value the caller happens to keep live
+   ;; across this instruction (e.g. movhi's loaded word, still needed after
+   ;; this shift computes the mask). Since IRA runs before reload_completed,
+   ;; it has no way to know the eventual split touches t0/t1 unless this
+   ;; pattern says so explicitly -- confirmed via 920302-1.c/pr93249.c: a
+   ;; word value live across one of these shift synthesis insns got
+   ;; allocated to t0, then silently clobbered by the shift's own back edge.
+   (clobber (reg:SI T0_REGNUM))
+   (clobber (reg:SI T1_REGNUM))]
   "!TARGET_SHIFT"
   "#"
   "reload_completed"
@@ -4028,7 +4042,14 @@
                      (match_operand    2 "const_int_operand")))
    (clobber (match_scratch:SI 3 "=&yt"))
    (clobber (match_scratch:SI 4 "=&yt"))
-   (clobber (match_scratch:SI 5 "=&yt"))]
+   (clobber (match_scratch:SI 5 "=&yt"))
+   ;; See lshrsi3_sc1's t0/t1 clobber comment above: even though this
+   ;; pattern's own per-bit test branches stay short-range today (no lui/jr
+   ;; needed), declaring the clobber here too keeps IRA from placing an
+   ;; unrelated live value in t0/t1 across this insn regardless of code
+   ;; layout.
+   (clobber (reg:SI T0_REGNUM))
+   (clobber (reg:SI T1_REGNUM))]
   "!TARGET_SHIFT"
   "#"
   "reload_completed"
@@ -4090,7 +4111,10 @@
    (clobber (match_scratch:SI 7  "=&yt"))
    (clobber (match_scratch:SI 8  "=&yt"))
    (clobber (match_scratch:SI 9  "=&yt"))
-   (clobber (match_scratch:SI 10 "=&yt"))]
+   (clobber (match_scratch:SI 10 "=&yt"))
+   ;; See lshrsi3_sc1's t0/t1 clobber comment above.
+   (clobber (reg:SI T0_REGNUM))
+   (clobber (reg:SI T1_REGNUM))]
   "!TARGET_SHIFT"
   "#"
   "reload_completed"
@@ -4214,7 +4238,10 @@
    (clobber (match_scratch:SI 4 "=&yt"))
    (clobber (match_scratch:SI 5 "=&yt"))
    (clobber (match_scratch:SI 6 "=&yt"))
-   (clobber (match_scratch:SI 7 "=&yt"))]
+   (clobber (match_scratch:SI 7 "=&yt"))
+   ;; See lshrsi3_sc1's t0/t1 clobber comment above.
+   (clobber (reg:SI T0_REGNUM))
+   (clobber (reg:SI T1_REGNUM))]
   "!TARGET_SHIFT"
   "#"
   "reload_completed"
@@ -4296,7 +4323,10 @@
   [(set (match_operand:SI 0 "register_operand" "=&yt")
         (ashift:SI (match_operand:SI 1 "register_operand"  "r")
                    (match_operand:SI 2 "register_operand"  "r")))
-   (clobber (match_scratch:SI 3 "=&yt"))]
+   (clobber (match_scratch:SI 3 "=&yt"))
+   ;; See lshrsi3_sc1's t0/t1 clobber comment above.
+   (clobber (reg:SI T0_REGNUM))
+   (clobber (reg:SI T1_REGNUM))]
   "!TARGET_SHIFT"
   "#"
   "reload_completed"
