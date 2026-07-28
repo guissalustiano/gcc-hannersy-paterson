@@ -3341,6 +3341,34 @@ riscv_legitimize_address (rtx x, rtx oldx ATTRIBUTE_UNUSED,
   return x;
 }
 
+/* Return a MEM for the naturally aligned word at ADDR_REG, for the byte and
+   halfword access synthesis used when !TARGET_BYTE / !TARGET_HALF.
+
+   Those sequences read, and in the store case rewrite, the entire enclosing
+   word, even though the RTL they replace names only a byte or halfword
+   object.  A plain gen_rtx_MEM does not say so: alias analysis traces the
+   address back through the `and' with -4 to the symbol it was derived from,
+   finds that two such accesses have different base symbols, and concludes
+   they cannot conflict.  That is true of the objects and false of the words
+   containing them.  Two adjacent char globals then get a read-modify-write
+   each, both loads sink above both stores, and whichever store goes second
+   writes back its stale copy of the other object -- observed on Embench
+   qrduino, where `VERSION = vers; WD = 17 + 4 * vers;' left WD correct and
+   VERSION zero.
+
+   Marking the access as aliasing everything (alias set 0) and as volatile
+   keeps the read-modify-write sequences ordered against each other and
+   against any other access that might land in the same word.  */
+
+rtx
+riscv_subword_container_mem (rtx addr_reg)
+{
+  rtx mem = gen_rtx_MEM (SImode, addr_reg);
+  set_mem_alias_set (mem, 0);
+  MEM_VOLATILE_P (mem) = 1;
+  return mem;
+}
+
 /* Synthesize VAL (which must be 2^N or 2^N - 1 for some N) into DEST
    without lui, for !TARGET_LUI (sc0) targets, via repeated add-self
    doubling starting from 1.  Writes only to DEST -- no pseudos are

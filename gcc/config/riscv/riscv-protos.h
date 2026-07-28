@@ -146,6 +146,7 @@ extern bool synthesize_and (rtx [3]);
 extern bool synthesize_add (rtx [3]);
 extern bool synthesize_add_extended (rtx [3]);
 extern rtx riscv_emit_const_no_lui (machine_mode, rtx, HOST_WIDE_INT);
+extern rtx riscv_subword_container_mem (rtx);
 
 #ifdef RTX_CODE
 extern void riscv_expand_int_scc (rtx, enum rtx_code, rtx, rtx, bool *invert_ptr = 0);

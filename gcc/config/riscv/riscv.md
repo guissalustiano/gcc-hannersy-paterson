@@ -1997,7 +1997,7 @@
       rtx t_aligned = gen_reg_rtx (SImode);
       emit_insn (gen_andsi3 (t_aligned, addr, t_neg4));
       rtx t_word = gen_reg_rtx (SImode);
-      emit_move_insn (t_word, gen_rtx_MEM (SImode, t_aligned));
+      emit_move_insn (t_word, riscv_subword_container_mem (t_aligned));
       rtx t2 = gen_reg_rtx (SImode);
       emit_move_insn (t2, GEN_INT (2));
       rtx t_half_off = gen_reg_rtx (SImode);
@@ -2238,7 +2238,7 @@
       rtx t_aligned = gen_reg_rtx (SImode);
       emit_insn (gen_andsi3 (t_aligned, addr, t_neg4));
       rtx t_word = gen_reg_rtx (SImode);
-      emit_move_insn (t_word, gen_rtx_MEM (SImode, t_aligned));
+      emit_move_insn (t_word, riscv_subword_container_mem (t_aligned));
       rtx t3 = gen_reg_rtx (SImode);
       emit_move_insn (t3, GEN_INT (3));
       rtx t_byte_off = gen_reg_rtx (SImode);
@@ -2359,7 +2359,7 @@
       rtx t_aligned = gen_reg_rtx (SImode);
       emit_insn (gen_andsi3 (t_aligned, addr, t_neg4));
       rtx t_word = gen_reg_rtx (SImode);
-      emit_move_insn (t_word, gen_rtx_MEM (SImode, t_aligned));
+      emit_move_insn (t_word, riscv_subword_container_mem (t_aligned));
       rtx t_mask = gen_reg_rtx (SImode);
       emit_move_insn (t_mask,
 		      GEN_INT (<SHORT:MODE>mode == QImode ? 3 : 2));
@@ -3065,7 +3065,7 @@
 
       /* Load aligned word */
       rtx t_word    = gen_reg_rtx (SImode);
-      emit_move_insn (t_word, gen_rtx_MEM (SImode, t_aligned));
+      emit_move_insn (t_word, riscv_subword_container_mem (t_aligned));
 
       /* mask = 0xFFFF << bit_off; word &= ~mask */
       rtx t_mask    = gen_reg_rtx (SImode);
@@ -3090,7 +3090,7 @@
       emit_insn (gen_ashlsi3 (t_val, t_val, t_bit_off));
       emit_insn (gen_iorsi3 (t_word, t_word, t_val));
 
-      emit_move_insn (gen_rtx_MEM (SImode, t_aligned), t_word);
+      emit_move_insn (riscv_subword_container_mem (t_aligned), t_word);
       DONE;
     }
   /* sc1 synthesis: lhu rd, addr → lw aligned; lshr by bit_off; mask 0xFFFF */
@@ -3102,7 +3102,7 @@
       rtx t_aligned = gen_reg_rtx (SImode);
       emit_insn (gen_andsi3 (t_aligned, addr, t_neg4));
       rtx t_word    = gen_reg_rtx (SImode);
-      emit_move_insn (t_word, gen_rtx_MEM (SImode, t_aligned));
+      emit_move_insn (t_word, riscv_subword_container_mem (t_aligned));
 
       /* bit_off = (addr & 2) << 3  → 0 or 16 */
       rtx t2        = gen_reg_rtx (SImode);
@@ -3446,7 +3446,7 @@
 
       /* Load aligned word */
       rtx t_word    = gen_reg_rtx (SImode);
-      emit_move_insn (t_word, gen_rtx_MEM (SImode, t_aligned));
+      emit_move_insn (t_word, riscv_subword_container_mem (t_aligned));
 
       /* mask = 0xFF << bit_off; word &= ~mask */
       rtx t_mask    = gen_reg_rtx (SImode);
@@ -3465,7 +3465,7 @@
       emit_insn (gen_ashlsi3 (t_val, t_val, t_bit_off));
       emit_insn (gen_iorsi3 (t_word, t_word, t_val));
 
-      emit_move_insn (gen_rtx_MEM (SImode, t_aligned), t_word);
+      emit_move_insn (riscv_subword_container_mem (t_aligned), t_word);
       DONE;
     }
   /* sc1 synthesis: lbu rd, addr → lw aligned; lshr by bit_off; mask 0xFF */
@@ -3477,7 +3477,7 @@
       rtx t_aligned = gen_reg_rtx (SImode);
       emit_insn (gen_andsi3 (t_aligned, addr, t_neg4));
       rtx t_word    = gen_reg_rtx (SImode);
-      emit_move_insn (t_word, gen_rtx_MEM (SImode, t_aligned));
+      emit_move_insn (t_word, riscv_subword_container_mem (t_aligned));
 
       /* bit_off = (addr & 3) << 3  → 0, 8, 16, or 24 */
       rtx t3        = gen_reg_rtx (SImode);
