@@ -1,0 +1,43 @@
+# Only for the rvsc targets that lack native shifts (rvsc0, rvsc1).
+#
+# div.S and muldi3.S are hand-written assembly, so -mno-shift does not reach
+# them and they assemble native slli/srli, which these two targets do not
+# implement.  rvsc2 and above do implement them and keep the assembly, which
+# is considerably faster and is what keeps rvsc2 a faithful stand-in for a
+# stock rv32i build.  Every object the compiler produces is ISA-clean, but a
+# program that divides or multiplies links these and executes them anyway.
+# Replace them with C versions that go through the synthesis path.  Only the
+# five SImode symbols they actually supply here are affected (__divsi3,
+# __modsi3, __udivsi3, __umodsi3 from div.S, and __mulsi3 from muldi3.S, which
+# renames __muldi3 to it when __riscv_xlen == 32); every DImode routine already
+# comes from libgcc2.c and is untouched.
+LIB2ADD := $(filter-out %/div.S %/muldi3.S,$(LIB2ADD))
+LIB2ADD += $(srcdir)/config/riscv/divmul_rvsc.c
+
+# Tell longlong.h that __mulsi3 is no longer the hand-written assembly, so its
+# __muluw3 inline asm must not assume the narrow "ra, a2, a3" clobber set that
+# only muldi3.S satisfies.
+HOST_LIBGCC2_CFLAGS += -D__RVSC_NO_MULASM__
+
+# Replace upstream multi3.c with a version that forces -O0 via function attribute:
+# the IRA at -O1/-O2 creates live-range holes in the outer loop that SLTU synthesis
+# temporaries fill, corrupting v_low's hard register.  -O0 prevents IRA from doing
+# any live-range splitting, so no holes appear.
+LIB2ADD := $(filter-out %multi3.c,$(LIB2ADD))
+LIB2ADD += $(srcdir)/config/riscv/multi3_rvsc.c
+
+# Force -O0 for all libgcc2.c compilations on rvsc targets.
+# The rvsc ISA restrictions (no shifts, no multiply, no divide) force GCC to
+# synthesize these operations via multi-instruction loops.  At -O1/-O2, the IRA
+# creates live-range "holes" inside those synthesis loops and reuses registers
+# from outer-loop variables, corrupting their values.  Division (__udivmoddi4)
+# and multiplication (__multi3) are the most affected.  Compiling at -O0 prevents
+# IRA from performing any live-range splitting, eliminating all such corruptions.
+HOST_LIBGCC2_CFLAGS += -O0
+
+# Both of the above are workarounds for IRA misbehaviour inside the multi-
+# instruction synthesis loops, which exist only where the ISA is missing the
+# underlying instruction.  rvsc2 and above synthesize nothing, so applying them
+# there only made libgcc slower for no reason -- it cost rvsc2 roughly a factor
+# of two on the 64-bit-multiply-heavy benchmarks and broke its role as a
+# faithful stand-in for a stock rv32i build.

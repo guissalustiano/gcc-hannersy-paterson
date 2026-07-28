@@ -1,21 +1,5 @@
 include $(srcdir)/config/riscv/t-elf
 
-# Replace upstream multi3.c with a version that forces -O0 via function attribute:
-# the IRA at -O1/-O2 creates live-range holes in the outer loop that SLTU synthesis
-# temporaries fill, corrupting v_low's hard register.  -O0 prevents IRA from doing
-# any live-range splitting, so no holes appear.
-LIB2ADD := $(filter-out %multi3.c,$(LIB2ADD))
-LIB2ADD += $(srcdir)/config/riscv/multi3_rvsc.c
-
-# Force -O0 for all libgcc2.c compilations on rvsc targets.
-# The rvsc ISA restrictions (no shifts, no multiply, no divide) force GCC to
-# synthesize these operations via multi-instruction loops.  At -O1/-O2, the IRA
-# creates live-range "holes" inside those synthesis loops and reuses registers
-# from outer-loop variables, corrupting their values.  Division (__udivmoddi4)
-# and multiplication (__multi3) are the most affected.  Compiling at -O0 prevents
-# IRA from performing any live-range splitting, eliminating all such corruptions.
-HOST_LIBGCC2_CFLAGS += -O0
-
 # Functions that trigger ICEs with rvsc synthesis restrictions (no FP ISA, no shifts).
 # HC (half-precision complex) and DI→SF float conversions generate unrecognizable insns.
 LIB2FUNCS_EXCLUDE += _mulhc3 _divhc3 _floatdisf _floatundisf

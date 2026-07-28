@@ -1086,8 +1086,27 @@ extern UDItype __umulsidi3 (USItype, USItype);
 #else
 #error unsupport xlen
 #endif /* __riscv_xlen */
-/* We rely on the fact that MULUW3 doesn't clobber the t-registers.
-   It can get better register allocation result.  */
+/* Upstream declares this asm with a clobber list of only "ra", "a2" and "a3",
+   on the stated assumption that MULUW3 "doesn't clobber the t-registers".
+   That is a property of the hand-written config/riscv/muldi3.S, not of the
+   symbol: it holds only for as long as __mulsi3 is that particular assembly
+   file, and nothing checks it.
+
+   The rvsc0 and rvsc1 targets cannot use muldi3.S, because it assembles native
+   slli/srli which they do not implement, and so build __mulsi3 from C instead
+   (libgcc/config/riscv/divmul_rvsc.c).  A C __mulsi3 uses whatever
+   caller-saved registers the allocator picks, at which point this asm silently
+   corrupts its caller -- seen as __muldi3 returning wrong cross terms whenever
+   the high word of either operand is nonzero, which reaches user code as wrong
+   results from any 64-bit multiply.  Those targets define __RVSC_NO_MULASM__
+   and get an ordinary multiplication, letting the compiler emit the call with
+   a correct clobber set.
+
+   Every other target keeps the asm form and the register-allocation advantage
+   the comment above claims.  */
+#ifdef __RVSC_NO_MULASM__
+#define __muluw3(a, b) ((UWtype) (a) * (UWtype) (b))
+#else
 #define __muluw3(a, b) \
   ({ \
     register UWtype __op0 asm ("a0") = a; \
@@ -1098,6 +1117,7 @@ extern UDItype __umulsidi3 (USItype, USItype);
                   : "ra", "a2", "a3"); \
     __op0; \
   })
+#endif
 #endif /* __riscv_mul */
 #define umul_ppmm(w1, w0, u, v) \
   do { \
