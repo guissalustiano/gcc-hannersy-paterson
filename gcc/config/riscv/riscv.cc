@@ -12330,13 +12330,28 @@ riscv_conditional_register_usage (void)
       fixed_regs[FRM_REGNUM] = call_used_regs[FRM_REGNUM] = 1;
     }
 
-  /* sc1/sc0 (!TARGET_AUIPC): branch-NE and unconditional jump synthesis
-     hardcode t1 (x6, reg 6) as a scratch register in their asm templates.
-     Since the clobber is not declared in the RTL pattern, the register
-     allocator can assign live values to t1, which are then silently
-     overwritten.  Reserve t1 as fixed to prevent this.  */
+  /* sc1/sc0 (!TARGET_AUIPC): the absolute-address synthesis sequences
+     hardcode t0 (x5) and t1 (x6) as scratch registers inside raw asm
+     template text -- the unconditional jump, the ordered-comparison and
+     branch-NE forms, indirect jump, tablejump, and the call sequences.
+     That text is invisible to the register allocator, and the patterns do
+     not declare the clobber in their RTL, so the allocator is free to keep
+     an unrelated live value in one of these registers across such an insn
+     and then have it silently overwritten.  Reserving both as fixed is what
+     makes the whole family safe at once; declaring the clobber pattern by
+     pattern only ever fixed the patterns somebody had already found.
+
+     t1 alone was reserved originally, when the jump synthesis still used it.
+     The jump was later moved to t0 to keep it clear of the call-address
+     temporary, but the reservation did not follow, which left every plain
+     jump able to destroy a live t0: confirmed on Embench `edn`, where
+     jpegdct kept an array offset in t0 across a loop back edge, spilled the
+     jump target in its place, and reloaded it as a pointer.  */
   if (!TARGET_AUIPC)
-    fixed_regs[GP_REG_FIRST + 6] = call_used_regs[GP_REG_FIRST + 6] = 1;
+    {
+      fixed_regs[GP_REG_FIRST + 5] = call_used_regs[GP_REG_FIRST + 5] = 1;
+      fixed_regs[GP_REG_FIRST + 6] = call_used_regs[GP_REG_FIRST + 6] = 1;
+    }
 
 }
 
